@@ -484,7 +484,6 @@
 
   .config-mode :global(.control-panel) {
       max-width: 1200px;
-      width: 90%;
   }
 
   .spectator {

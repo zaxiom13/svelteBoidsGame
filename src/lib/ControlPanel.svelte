@@ -225,11 +225,11 @@ function toggleSection(section) {
             </div>
             
             <div class="controls-section">
-                <button class="submit-button" on:click={handleSubmit}>
-                    Start Game
-                </button>
                 <button class="shuffle-button" on:click={randomizeConfiguration}>
                     Randomize All Settings
+                </button>
+                <button class="submit-button" on:click={handleSubmit}>
+                    Start Game
                 </button>
             </div>
         </div>
@@ -252,20 +252,27 @@ function toggleSection(section) {
 .content-container {
     width: 100%;
     max-width: 1200px;
-    display: flex;
+    /* display: flex; */
     flex-direction: column;
-    height: 100%;
+    height: 75%;
     overflow: hidden;
     box-sizing: border-box;
 }
 
 .panel-layout {
     display: flex;
+    flex-direction: column;
     gap: 20px;
     flex: 1;
     min-height: 0;
-    height: calc(100% - 60px); /* Subtract space for header */
+    height: calc(100% - 60px);
     overflow: hidden;
+}
+
+@media (min-width: 768px) {
+    .panel-layout {
+        flex-direction: row;
+    }
 }
 
 .settings-section {
@@ -278,23 +285,55 @@ function toggleSection(section) {
 }
 
 .controls-section {
-    width: 200px;
     display: flex;
     flex-direction: column;
     gap: 10px;
-    padding: 20px;
-    background: rgba(0, 0, 0, 0.4);
+    padding: 10px;
+}
+
+.controls-section button {
+    width: 100%;
+    max-width: 300px;
+    margin: 0 auto;
+    padding: 12px;
+    font-size: 1rem;
     border-radius: 8px;
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    height: fit-content;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+.shuffle-button {
+    background: #4a90e2;
+    border: none;
+    color: white;
+}
+
+.submit-button {
+    background: #4CAF50;
+    border: none;
+    color: white;
+}
+
+.shuffle-button:hover {
+    background: #357abd;
+}
+
+.submit-button:hover {
+    background: #45a049;
+}
+
+@media (min-width: 768px) {
+    .controls-section {
+        width: 200px;
+    }
 }
 
 .panel-content {
     overflow-y: auto;
     overflow-x: hidden;
-    height: calc(100% - 40px); /* Subtract space for help text */
-    padding: 0 12px 0 16px;
-    direction: rtl;
+    height: calc(100% - 40px);
+    padding: 0 12px;
+    -webkit-overflow-scrolling: touch;
     scrollbar-width: thin;
     scrollbar-color: rgba(0, 0, 0, 0.6) transparent;
     box-sizing: border-box;
@@ -332,20 +371,24 @@ function toggleSection(section) {
 label {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 12px;
     opacity: 0.9;
     cursor: help;
+    font-size: 16px;
 }
 
 input[type="range"] {
     width: 100%;
     accent-color: #4CAF50;
+    height: 36px;
+    margin: 0;
+    padding: 0;
 }
 
 .section-header {
     width: 100%;
     text-align: left;
-    padding: 12px 16px;
+    padding: 16px;
     background: rgba(255, 255, 255, 0.1);
     border: none;
     color: black;
@@ -354,7 +397,8 @@ input[type="range"] {
     justify-content: space-between;
     align-items: center;
     font-weight: 500;
-    box-sizing: border-box;
+    font-size: 16px;
+    min-height: 48px;
 }
 
 .section-header:hover {
@@ -372,25 +416,26 @@ input[type="range"] {
 }
 
 .section-content {
-    padding: 15px;
+    padding: 20px;
     display: flex;
     flex-direction: column;
-    gap: 15px;
+    gap: 20px;
     width: 100%;
     box-sizing: border-box;
 }
 
 .submit-button {
     width: 100%;
-    padding: 15px;
+    padding: 16px;
     background: #4CAF50;
     border: none;
-    border-radius: 4px;
+    border-radius: 8px;
     color: white;
     cursor: pointer;
-    font-size: 1.2em;
+    font-size: 18px;
     font-weight: bold;
     transition: all 0.2s ease;
+    min-height: 56px;
 }
 
 .submit-button:hover {
@@ -399,33 +444,35 @@ input[type="range"] {
 
 .help-text {
     text-align: center;
-    font-size: 0.9em;
+    font-size: 16px;
     opacity: 0.7;
-    margin: 0 0 10px 0;
+    margin: 0 0 16px 0;
     flex-shrink: 0;
+    padding: 0 16px;
 }
 
 h1 {
     text-align: center;
-    margin: 0 0 10px 0;
+    margin: 0 0 16px 0;
     color: black;
-    font-size: 2em;
+    font-size: 24px;
     flex-shrink: 0;
 }
 
 .shuffle-button {
     width: 100%;
-    padding: 10px;
+    padding: 16px;
     background: linear-gradient(45deg, #7158e2, #5f48c2);
     border: none;
-    border-radius: 4px;
+    border-radius: 8px;
     color: white;
     cursor: pointer;
-    font-size: 1em;
+    font-size: 16px;
     transition: all 0.3s ease;
     text-transform: uppercase;
     letter-spacing: 0.5px;
     font-weight: bold;
+    min-height: 56px;
 }
 
 .shuffle-button:hover {
@@ -437,10 +484,12 @@ h1 {
     display: flex;
     flex-direction: row;
     align-items: center;
-    gap: 8px;
+    gap: 12px;
+    min-height: 44px;
 }
 
 .checkbox-label input[type="checkbox"] {
-    width: auto;
+    width: 24px;
+    height: 24px;
 }
 </style>

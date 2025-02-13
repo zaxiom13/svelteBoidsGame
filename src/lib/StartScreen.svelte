@@ -32,10 +32,11 @@ function handlePickGroup(groupIndex) {
 
 <style>
 .start-screen {
-    padding: 40px;
+    padding: 20px;
     text-align: center;
     background: rgba(0, 0, 0, 0.9);
     border-radius: 12px;
+    width: 90%;
     max-width: 800px;
     margin: 0 auto;
 }
@@ -55,10 +56,10 @@ h1 {
 
 .group-picks {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-    gap: 1.5rem;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 1rem;
     justify-content: center;
-    padding: 1rem;
+    padding: 0.5rem;
 }
 
 .group-pick {
@@ -66,7 +67,7 @@ h1 {
     flex-direction: column;
     align-items: center;
     gap: 1rem;
-    padding: 1.5rem;
+    padding: 1rem;
     border: 2px solid var(--color);
     background: rgba(255, 255, 255, 0.05);
     color: var(--color);
