@@ -7,10 +7,10 @@ import { Quadtree } from './Quadtree.js';
 export { BOID_COLORS };  // Re-export for backward compatibility
 
 export const weights = writable({
-    separation: 2.0,    // Increased from 1.5
-    alignment: 1.5,     // Increased from 1.0
-    cohesion: 1.2,      // Increased from 1.0
-    groupRepulsion: 1.5, // Increased from 1.0
+    separation: 2.0,
+    alignment: 1.5,
+    cohesion: 1.2,
+    groupRepulsion: 0, // Set to zero as requested
     mouseRepulsion: 1.0
 });
 
@@ -19,7 +19,7 @@ export const speeds = writable({
     max: 4
 });
 
-export const numBoids = writable(50);
+export const numBoids = writable(150); // Set to 150 as requested
 export const numGroups = writable(4);
 
 export const visualSettings = writable({
@@ -27,14 +27,14 @@ export const visualSettings = writable({
     trailLength: 20,
     trailWidth: 2,
     trailOpacity: 0.25,
-    neighborRadius: 50,
+    neighborRadius: 30, // Maximized neighbor radius for more influence
     separationRadius: 25
 });
 
 export const groupSettings = writable({
-    peerPressure: 0.001,
-    peerRadius: 40,
-    loyaltyFactor: 0.5
+    peerPressure: 0.1, // Maximized peer pressure
+    peerRadius: 50, // Maximized peer radius for more influence
+    loyaltyFactor: 0 // Set to zero as requested
 });
 
 export const uiState = writable({
@@ -55,11 +55,11 @@ export const mouseSettings = writable({
 function createBoids(numBoids, canvasWidth, canvasHeight, groupCount) {
     const boids = [];
     for (let i = 0; i < numBoids; i++) {
-        const x = Math.random() * canvasWidth;
-        const y = Math.random() * canvasHeight;
-        // Increase initial velocity range to be between min and max speed
+        // Fix boid positioning to properly use full canvas height
+        const x = Math.random() * (canvasWidth - 20) + 10; // Keep boids 10px from edges
+        const y = Math.random() * (canvasHeight - 20) + 10;
         const speed = 2 + Math.random() * 2; // Random speed between 2 and 4
-        const angle = Math.random() * Math.PI * 2; // Random angle in radians
+        const angle = Math.random() * Math.PI * 2;
         const vx = Math.cos(angle) * speed;
         const vy = Math.sin(angle) * speed;
         const groupIndex = i % groupCount;
@@ -84,20 +84,29 @@ function createBoidsAndQuadtree(numBoids, canvasWidth, canvasHeight, groupCount)
 export const boids = writable(createBoidsAndQuadtree(get(numBoids), 800, 600, get(numGroups)));
 
 export function resetBoids(count, canvasWidth, canvasHeight, groupCount) {
-     // Only reset game state when manually resetting boids during a running game
-     const currentGameState = get(gameState);
-     if (currentGameState.status === 'running' || currentGameState.status === 'countdown') {
-         gameState.set({
-             status: 'start',
-             playerPick: null,
-             winner: null,
-             startTime: null,
-             endTime: null,
-             countdown: 3,
-             isEliminated: false,
-             finalWinner: null
-         });
-     }
+    // Only reset game state when manually resetting boids during a running game
+    const currentGameState = get(gameState);
+    if (currentGameState.status === 'running' || currentGameState.status === 'countdown') {
+        gameState.set({
+            status: 'start',
+            playerPick: null,
+            winner: null,
+            startTime: null,
+            endTime: null,
+            countdown: 3,
+            isEliminated: false,
+            finalWinner: null,
+            showEliminationScreen: false
+        });
+    }
+
+    // Validate dimensions
+    // if (!canvasWidth || !canvasHeight) {
+    //     console.warn('Invalid canvas dimensions, using defaults');
+    //     canvasWidth = window.innerWidth * 0.8;
+    //     canvasHeight = window.innerHeight * 0.8;
+    // }
+
     const boidsData = createBoidsAndQuadtree(count, canvasWidth, canvasHeight, groupCount);
     boids.set(boidsData);
 }

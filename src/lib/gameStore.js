@@ -37,10 +37,10 @@ export function moveToPlayerSelection() {
 export function startGame(pickedGroup) {
     const currentNumBoids = get(numBoids);
     const currentNumGroups = get(numGroups);
-    const { height } = get(canvasSettings);
+    const canvas = document.querySelector('canvas');
     
-    // Reset boids at the start of the game using current settings
-    resetBoids(currentNumBoids, window.innerWidth, height, currentNumGroups);
+    // Reset boids using actual canvas dimensions
+    resetBoids(currentNumBoids, canvas.width, canvas.height, currentNumGroups);
 
     gameState.update(state => ({
         ...state,
