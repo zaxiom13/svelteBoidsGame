@@ -25,8 +25,6 @@
   onMount(() => {
       ctx = canvas.getContext('2d');
       resizeCanvas();
-      // Reset boids with proper canvas dimensions after resize
-      resetBoids(get(numBoids), canvas.width, canvas.height, get(numGroups));
       window.addEventListener('resize', resizeCanvas);
       requestAnimationFrame(update);
   });
@@ -133,7 +131,7 @@
       canvas.width = window.innerWidth * 0.8;
       canvas.height = window.innerHeight * 0.8;
       
-      // Update quadtree bounds when canvas is resized
+      // Only update quadtree bounds without resetting boids
       if ($boids.quadtree) {
           $boids.quadtree.bounds = {
               x: 0,
@@ -141,13 +139,15 @@
               width: canvas.width,
               height: canvas.height
           };
-          // Force a full rebuild of the quadtree with new bounds
+          
+          // Update quadtree with existing boids
           $boids.quadtree.clear();
           for (const boid of $boids.boids) {
+              // Keep boids within new canvas bounds
+              if (boid.position.x > canvas.width) boid.position.x = canvas.width;
+              if (boid.position.y > canvas.height) boid.position.y = canvas.height;
               $boids.quadtree.insert(boid);
           }
-          // Reset boids positions after resize
-          resetBoids(get(numBoids), canvas.width, canvas.height, get(numGroups));
       }
   }
 
