@@ -25,6 +25,7 @@
   onMount(() => {
       ctx = canvas.getContext('2d');
       resizeCanvas();
+      resetBoids(get(numBoids), canvas.width, canvas.height, get(numGroups));
       window.addEventListener('resize', resizeCanvas);
       requestAnimationFrame(update);
   });
