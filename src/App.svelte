@@ -523,7 +523,7 @@
     // Draw boids (smaller, simpler)
     $boids.boids.forEach(boid => {
       const angle = Math.atan2(boid.velocity.y, boid.velocity.x);
-      const size = $visualSettings.boidSize / camera.zoom;
+      const size = $visualSettings.boidSize;
       
       ctx.save();
       ctx.translate(boid.position.x, boid.position.y);

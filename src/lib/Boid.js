@@ -174,9 +174,15 @@ export class Boid {
             this.velocity.y = Math.sin(Math.random() * Math.PI * 2) * 2;
         }
 
-        // Update position
+        // Update position with collision resolution against walls/doors and borders
+        const prevX = this.position.x;
+        const prevY = this.position.y;
+
         this.position.x += this.velocity.x;
         this.position.y += this.velocity.y;
+
+        // Robust obstacle collision resolution to prevent tunneling
+        this.resolveObstacleCollisions(prevX, prevY);
 
         // Validate position
         if (!isFinite(this.position.x) || !isFinite(this.position.y)) {
@@ -188,9 +194,8 @@ export class Boid {
             this.velocity.y = 0;
         }
 
-        // Clamp to arena bounds (no wrapping)
-        this.position.x = Math.max(0, Math.min(ARENA_W, this.position.x));
-        this.position.y = Math.max(0, Math.min(ARENA_H, this.position.y));
+        // Clamp to arena bounds (no wrapping) and resolve border collisions
+        this.resolveBorderCollisions(canvasWidth, canvasHeight);
     }
 
     updateTrail() {
@@ -604,5 +609,74 @@ export class Boid {
         }
         
         return steer;
+    }
+
+    // Ensure boid does not end up inside any obstacle and mitigate wall sticking
+    resolveObstacleCollisions(prevX, prevY) {
+        // Build obstacle list (static walls + currently closed doors)
+        const obstacles = [...WALLS];
+        DOORS.forEach(door => { if (!doorManager.isDoorOpen(door.id)) obstacles.push(door); });
+
+        for (const wall of obstacles) {
+            const inside = this.position.x >= wall.x && this.position.x <= wall.x + wall.w &&
+                           this.position.y >= wall.y && this.position.y <= wall.y + wall.h;
+            if (!inside) continue;
+
+            // Compute minimal translation to nearest edge
+            const distLeft = this.position.x - wall.x;
+            const distRight = (wall.x + wall.w) - this.position.x;
+            const distTop = this.position.y - wall.y;
+            const distBottom = (wall.y + wall.h) - this.position.y;
+
+            const minDist = Math.min(distLeft, distRight, distTop, distBottom);
+            const epsilon = 0.1;
+
+            if (minDist === distLeft) {
+                this.position.x = wall.x - epsilon;
+                // Zero out normal velocity component to avoid re-entry
+                if (this.velocity.x > 0) this.velocity.x = 0;
+            } else if (minDist === distRight) {
+                this.position.x = wall.x + wall.w + epsilon;
+                if (this.velocity.x < 0) this.velocity.x = 0;
+            } else if (minDist === distTop) {
+                this.position.y = wall.y - epsilon;
+                if (this.velocity.y > 0) this.velocity.y = 0;
+            } else {
+                this.position.y = wall.y + wall.h + epsilon;
+                if (this.velocity.y < 0) this.velocity.y = 0;
+            }
+
+            // Add a slight tangential nudge to help sliding along surfaces
+            const tangentBoost = 0.2;
+            if (Math.abs(this.velocity.x) < 0.01 && Math.abs(this.velocity.y) < 0.01) {
+                // If fully stopped, nudge along previous motion direction
+                const dx = this.position.x - prevX;
+                const dy = this.position.y - prevY;
+                const mag = Math.hypot(dx, dy) || 1;
+                this.velocity.x += (dx / mag) * tangentBoost;
+                this.velocity.y += (dy / mag) * tangentBoost;
+            }
+        }
+    }
+
+    // Keep boid inside arena and prevent edge sticking with velocity correction
+    resolveBorderCollisions(arenaW, arenaH) {
+        const epsilon = 0.1;
+
+        if (this.position.x < 0) {
+            this.position.x = 0 + epsilon;
+            if (this.velocity.x < 0) this.velocity.x = 0.5; // push inward slightly
+        } else if (this.position.x > arenaW) {
+            this.position.x = arenaW - epsilon;
+            if (this.velocity.x > 0) this.velocity.x = -0.5;
+        }
+
+        if (this.position.y < 0) {
+            this.position.y = 0 + epsilon;
+            if (this.velocity.y < 0) this.velocity.y = 0.5;
+        } else if (this.position.y > arenaH) {
+            this.position.y = arenaH - epsilon;
+            if (this.velocity.y > 0) this.velocity.y = -0.5;
+        }
     }
 }

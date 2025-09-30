@@ -53,6 +53,8 @@ describe('Boids Store State Presence', () => {
             expect(weightState).toHaveProperty('cohesion');
             expect(weightState).toHaveProperty('groupRepulsion');
             expect(weightState).toHaveProperty('mouseRepulsion');
+            expect(weightState).toHaveProperty('wallAvoidance');
+            expect(weightState).toHaveProperty('borderAvoidance');
         });
 
         it('should have correct speeds structure', () => {

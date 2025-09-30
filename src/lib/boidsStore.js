@@ -18,7 +18,9 @@ export const weights = writable({
     alignment: 1.5,
     cohesion: 1.2,
     groupRepulsion: 0.3,
-    mouseRepulsion: 1.5
+    mouseRepulsion: 1.5,
+    wallAvoidance: 3.0,
+    borderAvoidance: 3.0
 });
 
 export const speeds = writable({
@@ -200,7 +202,9 @@ export function randomizeConfiguration() {
         alignment: Math.random() * 3,
         cohesion: Math.random() * 3,
         groupRepulsion: Math.random() * 3,
-        mouseRepulsion: Math.random() * 3
+        mouseRepulsion: Math.random() * 3,
+        wallAvoidance: 1 + Math.random() * 4,
+        borderAvoidance: 1 + Math.random() * 4
     }));
 
     speeds.update(() => ({
