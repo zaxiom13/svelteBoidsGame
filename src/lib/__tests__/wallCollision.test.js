@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { Boid } from '../Boid.js';
 import { WALLS, DOORS, doorManager, ARENA_W, ARENA_H, BOID_COLORS } from '../constants.js';
 
@@ -200,9 +200,101 @@ describe('Wall Collision Tests', () => {
       // This might fail, revealing the bug
       expect(finallyInside).toBe(false);
     });
+
+    it('should prevent wall penetration with full physics simulation', () => {
+      const wall = WALLS[0];
+      const quadtree = { query: vi.fn(() => []) };
+      const boidsData = { boids: [], quadtree };
+      
+      // Place boid approaching wall at high speed
+      boid.position.x = wall.x - 150;
+      boid.position.y = wall.y + wall.h / 2;
+      boid.velocity.x = 8; // High speed toward wall
+      boid.velocity.y = 0;
+      
+      // Simulate 50 frames with full update cycle
+      for (let i = 0; i < 50; i++) {
+        boid.update(
+          ARENA_W, 
+          ARENA_H, 
+          boidsData,
+          { separation: 1, alignment: 1, cohesion: 1, groupRepulsion: 1, mouseRepulsion: 1, wallAvoidance: 5, borderAvoidance: 1 },
+          { min: 2, max: 4 },
+          { separationRadius: 25, neighborRadius: 50, trailLength: 20 },
+          { peerRadius: 50, peerPressure: 0.1, loyaltyFactor: 0.5 },
+          { active: false, position: { x: 0, y: 0 }, repulsionRadius: 100 }
+        );
+        
+        // Check if boid penetrated wall
+        const isInside = 
+          boid.position.x >= wall.x &&
+          boid.position.x <= wall.x + wall.w &&
+          boid.position.y >= wall.y &&
+          boid.position.y <= wall.y + wall.h;
+        
+        expect(isInside).toBe(false);
+      }
+    });
+
+    it('should not penetrate wall from any angle', () => {
+      // Find a wall that's not at the arena borders (to avoid clamping issues)
+      const wall = WALLS.find(w => 
+        w.y > 100 && 
+        w.y + w.h < ARENA_H - 100 && 
+        w.x > 100 && 
+        w.x + w.w < ARENA_W - 100
+      ) || WALLS[5]; // Fallback to 6th wall
+      
+      const quadtree = { query: vi.fn(() => []) };
+      const boidsData = { boids: [], quadtree };
+      
+      // Test from 4 directions
+      const testCases = [
+        { x: wall.x - 50, y: wall.y + wall.h / 2, vx: 5, vy: 0, name: 'left' },
+        { x: wall.x + wall.w + 50, y: wall.y + wall.h / 2, vx: -5, vy: 0, name: 'right' },
+        { x: wall.x + wall.w / 2, y: wall.y - 50, vx: 0, vy: 5, name: 'top' },
+        { x: wall.x + wall.w / 2, y: wall.y + wall.h + 50, vx: 0, vy: -5, name: 'bottom' },
+      ];
+      
+      testCases.forEach(testCase => {
+        boid.position.x = testCase.x;
+        boid.position.y = testCase.y;
+        boid.velocity.x = testCase.vx;
+        boid.velocity.y = testCase.vy;
+        
+        let penetrationDetected = false;
+        
+        // Simulate 30 frames
+        for (let i = 0; i < 30; i++) {
+          boid.update(
+            ARENA_W, 
+            ARENA_H, 
+            boidsData,
+            { separation: 1, alignment: 1, cohesion: 1, groupRepulsion: 1, mouseRepulsion: 1, wallAvoidance: 5, borderAvoidance: 1 },
+            { min: 2, max: 4 },
+            { separationRadius: 25, neighborRadius: 50, trailLength: 20 },
+            { peerRadius: 50, peerPressure: 0.1, loyaltyFactor: 0.5 },
+            { active: false, position: { x: 0, y: 0 }, repulsionRadius: 100 }
+          );
+          
+          const isInside = 
+            boid.position.x >= wall.x &&
+            boid.position.x <= wall.x + wall.w &&
+            boid.position.y >= wall.y &&
+            boid.position.y <= wall.y + wall.h;
+          
+          if (isInside) {
+            penetrationDetected = true;
+            console.log(`Penetration detected from ${testCase.name} at frame ${i}: pos=(${boid.position.x.toFixed(2)}, ${boid.position.y.toFixed(2)}), vel=(${boid.velocity.x.toFixed(2)}, ${boid.velocity.y.toFixed(2)})`);
+          }
+        }
+        
+        expect(penetrationDetected).toBe(false);
+      });
+    });
   });
 
-  describe('Outside Wall Sticking', () => {
+  describe('Border Sticking Prevention', () => {
     it('should not stick to arena border', () => {
       // Place near left border
       boid.position.x = 10;
@@ -251,6 +343,164 @@ describe('Wall Collision Tests', () => {
       }
       
       expect(stuck).toBe(false);
+    });
+
+    it('should not get stuck at left border with full physics', () => {
+      const quadtree = { query: vi.fn(() => []) };
+      const boidsData = { boids: [], quadtree };
+      
+      boid.position.x = 2;
+      boid.position.y = ARENA_H / 2;
+      boid.velocity.x = -1;
+      boid.velocity.y = 2;
+      
+      let minDistance = boid.position.x;
+      let maxDistance = boid.position.x;
+      
+      // Simulate 100 frames
+      for (let i = 0; i < 100; i++) {
+        boid.update(
+          ARENA_W, 
+          ARENA_H, 
+          boidsData,
+          { separation: 1, alignment: 1, cohesion: 1, groupRepulsion: 1, mouseRepulsion: 1, wallAvoidance: 1, borderAvoidance: 3 },
+          { min: 2, max: 4 },
+          { separationRadius: 25, neighborRadius: 50, trailLength: 20 },
+          { peerRadius: 50, peerPressure: 0.1, loyaltyFactor: 0.5 },
+          { active: false, position: { x: 0, y: 0 }, repulsionRadius: 100 }
+        );
+        
+        minDistance = Math.min(minDistance, boid.position.x);
+        maxDistance = Math.max(maxDistance, boid.position.x);
+      }
+      
+      // Should have moved away from border (not stuck at same position)
+      expect(maxDistance - minDistance).toBeGreaterThan(20);
+      // Should be well away from border after 100 frames
+      expect(boid.position.x).toBeGreaterThan(30);
+    });
+
+    it('should not get stuck at right border', () => {
+      const quadtree = { query: vi.fn(() => []) };
+      const boidsData = { boids: [], quadtree };
+      
+      boid.position.x = ARENA_W - 2;
+      boid.position.y = ARENA_H / 2;
+      boid.velocity.x = 1;
+      boid.velocity.y = 2;
+      
+      let minDistance = ARENA_W - boid.position.x;
+      let maxDistance = ARENA_W - boid.position.x;
+      
+      for (let i = 0; i < 100; i++) {
+        boid.update(
+          ARENA_W, 
+          ARENA_H, 
+          boidsData,
+          { separation: 1, alignment: 1, cohesion: 1, groupRepulsion: 1, mouseRepulsion: 1, wallAvoidance: 1, borderAvoidance: 3 },
+          { min: 2, max: 4 },
+          { separationRadius: 25, neighborRadius: 50, trailLength: 20 },
+          { peerRadius: 50, peerPressure: 0.1, loyaltyFactor: 0.5 },
+          { active: false, position: { x: 0, y: 0 }, repulsionRadius: 100 }
+        );
+        
+        const distFromBorder = ARENA_W - boid.position.x;
+        minDistance = Math.min(minDistance, distFromBorder);
+        maxDistance = Math.max(maxDistance, distFromBorder);
+      }
+      
+      expect(maxDistance - minDistance).toBeGreaterThan(20);
+      expect(boid.position.x).toBeLessThan(ARENA_W - 30);
+    });
+
+    it('should not get stuck at top border', () => {
+      const quadtree = { query: vi.fn(() => []) };
+      const boidsData = { boids: [], quadtree };
+      
+      boid.position.x = ARENA_W / 2;
+      boid.position.y = 2;
+      boid.velocity.x = 2;
+      boid.velocity.y = -1;
+      
+      for (let i = 0; i < 100; i++) {
+        boid.update(
+          ARENA_W, 
+          ARENA_H, 
+          boidsData,
+          { separation: 1, alignment: 1, cohesion: 1, groupRepulsion: 1, mouseRepulsion: 1, wallAvoidance: 1, borderAvoidance: 3 },
+          { min: 2, max: 4 },
+          { separationRadius: 25, neighborRadius: 50, trailLength: 20 },
+          { peerRadius: 50, peerPressure: 0.1, loyaltyFactor: 0.5 },
+          { active: false, position: { x: 0, y: 0 }, repulsionRadius: 100 }
+        );
+      }
+      
+      expect(boid.position.y).toBeGreaterThan(30);
+    });
+
+    it('should not get stuck at bottom border', () => {
+      const quadtree = { query: vi.fn(() => []) };
+      const boidsData = { boids: [], quadtree };
+      
+      boid.position.x = ARENA_W / 2;
+      boid.position.y = ARENA_H - 2;
+      boid.velocity.x = 2;
+      boid.velocity.y = 1;
+      
+      for (let i = 0; i < 100; i++) {
+        boid.update(
+          ARENA_W, 
+          ARENA_H, 
+          boidsData,
+          { separation: 1, alignment: 1, cohesion: 1, groupRepulsion: 1, mouseRepulsion: 1, wallAvoidance: 1, borderAvoidance: 3 },
+          { min: 2, max: 4 },
+          { separationRadius: 25, neighborRadius: 50, trailLength: 20 },
+          { peerRadius: 50, peerPressure: 0.1, loyaltyFactor: 0.5 },
+          { active: false, position: { x: 0, y: 0 }, repulsionRadius: 100 }
+        );
+      }
+      
+      expect(boid.position.y).toBeLessThan(ARENA_H - 30);
+    });
+
+    it('should not stick to corners', () => {
+      const quadtree = { query: vi.fn(() => []) };
+      const boidsData = { boids: [], quadtree };
+      
+      // Test all 4 corners
+      const corners = [
+        { x: 2, y: 2, name: 'top-left' },
+        { x: ARENA_W - 2, y: 2, name: 'top-right' },
+        { x: 2, y: ARENA_H - 2, name: 'bottom-left' },
+        { x: ARENA_W - 2, y: ARENA_H - 2, name: 'bottom-right' },
+      ];
+      
+      corners.forEach(corner => {
+        boid.position.x = corner.x;
+        boid.position.y = corner.y;
+        boid.velocity.x = 0;
+        boid.velocity.y = 0;
+        
+        // Simulate 100 frames
+        for (let i = 0; i < 100; i++) {
+          boid.update(
+            ARENA_W, 
+            ARENA_H, 
+            boidsData,
+            { separation: 1, alignment: 1, cohesion: 1, groupRepulsion: 1, mouseRepulsion: 1, wallAvoidance: 1, borderAvoidance: 3 },
+            { min: 2, max: 4 },
+            { separationRadius: 25, neighborRadius: 50, trailLength: 20 },
+            { peerRadius: 50, peerPressure: 0.1, loyaltyFactor: 0.5 },
+            { active: false, position: { x: 0, y: 0 }, repulsionRadius: 100 }
+          );
+        }
+        
+        // Should have moved away from corner
+        const distX = corner.x < ARENA_W / 2 ? boid.position.x - corner.x : corner.x - boid.position.x;
+        const distY = corner.y < ARENA_H / 2 ? boid.position.y - corner.y : corner.y - boid.position.y;
+        
+        expect(distX + distY).toBeGreaterThan(50);
+      });
     });
   });
 
@@ -329,5 +579,43 @@ describe('Wall Configuration Tests', () => {
       expect(door.id).toBeDefined();
       expect(door.orientation).toMatch(/horizontal|vertical/);
     });
+  });
+});
+
+describe('Boid Size Tests', () => {
+  let visualSettings, get;
+  
+  beforeEach(async () => {
+    const boidsStoreModule = await import('../boidsStore.js');
+    const svelteStoreModule = await import('svelte/store');
+    visualSettings = boidsStoreModule.visualSettings;
+    get = svelteStoreModule.get;
+  });
+
+  it('should have small boid size in visual settings', () => {
+    const settings = get(visualSettings);
+    
+    // Boids should be quite small (less than or equal to 5)
+    expect(settings.boidSize).toBeLessThanOrEqual(5);
+    expect(settings.boidSize).toBeGreaterThan(0);
+  });
+
+  it('should render boids with small visual size', () => {
+    const settings = get(visualSettings);
+    
+    // With default zoom of 0.25, effective size should be very small
+    const zoom = 0.25;
+    const effectiveSize = settings.boidSize / zoom;
+    
+    // Even with zoom, effective size should be reasonable (not huge)
+    expect(effectiveSize).toBeLessThan(50);
+  });
+
+  it('boids should be significantly smaller than walls', () => {
+    const settings = get(visualSettings);
+    
+    // Boid size should be much smaller than wall thickness
+    const wallThickness = 40; // From constants
+    expect(settings.boidSize).toBeLessThan(wallThickness / 4);
   });
 });
