@@ -32,19 +32,27 @@ A tactical boids-based strategy game inspired by Ender's Game, where you command
 
 ### Game Features
 
-#### Vertical Arena with Sliding Doors
-- **1600×3200 portrait orientation** (mobile-optimized)
-- **2×4 sector grid** (A1-B1, A2-B2, A3-B3, A4-B4)
+#### Square Arena with Sliding Doors
+- **3200×3200 square layout** (works great on mobile & desktop)
+- **4×4 sector grid** (16 sectors: A1-D1, A2-D2, A3-D3, A4-D4)
 - **Silo/prison layout** with solid walls between sectors
 - **Sliding doors** open/close periodically (5s cycles)
   - Even doors open first half of cycle
   - Odd doors open second half
   - Creates dynamic tactical flow
-- Boids avoid walls and closed doors naturally
+- **Advanced collision system**:
+  - Boids cannot penetrate walls (3-tier detection)
+  - Smooth sliding along wall surfaces
+  - No corner-sticking
+  - Emergency escape when inside obstacles
 
 #### Camera System
-- Smooth zoom: from full-map overview to single-sector detail
+- **Zoom range**: 0.15x - 1.8x
+  - Min zoom: Arena takes ~50% of screen (strategic overview)
+  - Max zoom: Close tactical view (individual boid detail)
+- Smooth zoom interpolation
 - Pinch-to-zoom and wheel zoom support
+- Two-finger pan for camera movement
 - Mini-map HUD shows walls/geometry and current view
 
 #### Tactical Pause Screen

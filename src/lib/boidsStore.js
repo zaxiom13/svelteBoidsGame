@@ -104,23 +104,25 @@ function createBoids(numBoids, canvasWidth, canvasHeight, groupCount) {
     const boids = [];
     const boidsPerTeam = Math.floor(numBoids / 2);
     
-    // For vertical layout: spawn in top and bottom sectors
-    // Player spawns in A1 (top-left) and B1 (top-right)
-    // AI spawns in A4 (bottom-left) and B4 (bottom-right)
+    // For square 4x4 arena: spawn in top and bottom rows
+    // Player spawns in top row (A1, B1, C1, D1)
+    // AI spawns in bottom row (A4, B4, C4, D4)
     
     for (let i = 0; i < numBoids; i++) {
         const groupIndex = i < boidsPerTeam ? TEAM.PLAYER : TEAM.AI;
         
         let pos;
         if (groupIndex === TEAM.PLAYER) {
-            // Spawn in top sectors (row 0)
-            const col = i % 2; // Alternate between left and right
+            // Spawn in top row sectors (row 0)
+            // Distribute across all 4 columns
+            const col = i % SECTOR_COLS;
             const sectorX = col * SECTOR_W;
             const sectorY = 0;
             pos = findEmptySpotInSector(sectorX, sectorY, SECTOR_W, SECTOR_H);
         } else {
-            // Spawn in bottom sectors (row 3)
-            const col = i % 2; // Alternate between left and right
+            // Spawn in bottom row sectors (row 3)
+            // Distribute across all 4 columns
+            const col = (i - boidsPerTeam) % SECTOR_COLS;
             const sectorX = col * SECTOR_W;
             const sectorY = 3 * SECTOR_H;
             pos = findEmptySpotInSector(sectorX, sectorY, SECTOR_W, SECTOR_H);

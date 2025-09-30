@@ -160,12 +160,12 @@ describe('Boid Visibility and Position Tests', () => {
     it('should have valid arena dimensions', () => {
       expect(ARENA_W).toBeGreaterThan(0);
       expect(ARENA_H).toBeGreaterThan(0);
-      expect(ARENA_W).toBe(1600);
+      expect(ARENA_W).toBe(3200);
       expect(ARENA_H).toBe(3200);
     });
 
-    it('should have vertical orientation', () => {
-      expect(ARENA_H).toBeGreaterThan(ARENA_W);
+    it('should have square arena', () => {
+      expect(ARENA_H).toBe(ARENA_W);
     });
   });
 

@@ -17,10 +17,11 @@
   let canvasHeight = window.innerHeight;
   let isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
   
-  // Camera state - adjusted for vertical layout
-  let camera = { x: ARENA_W / 2, y: ARENA_H / 2, zoom: 0.45, targetZoom: 0.45 };
-  const minZoom = 0.25;  // Can see full vertical map
-  const maxZoom = 1.5;   // Can zoom in closer
+  // Camera state - adjusted for square arena (3200x3200)
+  let camera = { x: ARENA_W / 2, y: ARENA_H / 2, zoom: 0.25, targetZoom: 0.25 };
+  // Min zoom: arena takes ~50% of screen (can zoom out more than arena size)
+  const minZoom = 0.15;  // Can see arena + surrounding space
+  const maxZoom = 1.8;   // Can zoom in very close
   
   // Touch state
   let touches = [];

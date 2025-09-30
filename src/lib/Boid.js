@@ -436,8 +436,9 @@ export class Boid {
 
     avoidWalls() {
         const steer = { x: 0, y: 0 };
-        const detectionRadius = 80;  // Increased from 50
-        const urgentRadius = 30;     // Very close - emergency avoidance
+        const detectionRadius = 100;  // Increased detection range
+        const urgentRadius = 40;      // Emergency zone
+        const insideRadius = 1;       // Definitely inside obstacle
         
         // Combine static walls and closed doors
         const allObstacles = [...WALLS];
@@ -449,8 +450,8 @@ export class Boid {
             }
         });
         
-        let closestDist = Infinity;
-        let closestObstacle = null;
+        let totalForce = { x: 0, y: 0 };
+        let obstacleCount = 0;
         
         for (const wall of allObstacles) {
             // Find closest point on wall to boid
@@ -461,50 +462,104 @@ export class Boid {
             const dy = this.position.y - closestY;
             const distance = Math.sqrt(dx * dx + dy * dy);
             
-            if (distance < closestDist) {
-                closestDist = distance;
-                closestObstacle = { x: closestX, y: closestY, dx, dy, distance };
+            // Check if boid is INSIDE the obstacle
+            const isInside = 
+                this.position.x >= wall.x && 
+                this.position.x <= wall.x + wall.w &&
+                this.position.y >= wall.y && 
+                this.position.y <= wall.y + wall.h;
+            
+            if (isInside || distance < detectionRadius) {
+                obstacleCount++;
+                
+                let force, dirX, dirY;
+                
+                if (isInside) {
+                    // INSIDE obstacle - find shortest escape route
+                    const distToLeft = this.position.x - wall.x;
+                    const distToRight = (wall.x + wall.w) - this.position.x;
+                    const distToTop = this.position.y - wall.y;
+                    const distToBottom = (wall.y + wall.h) - this.position.y;
+                    
+                    const minDist = Math.min(distToLeft, distToRight, distToTop, distToBottom);
+                    
+                    // Push toward nearest edge
+                    if (minDist === distToLeft) {
+                        dirX = -1; dirY = 0;
+                    } else if (minDist === distToRight) {
+                        dirX = 1; dirY = 0;
+                    } else if (minDist === distToTop) {
+                        dirX = 0; dirY = -1;
+                    } else {
+                        dirX = 0; dirY = 1;
+                    }
+                    
+                    // Very strong force to escape
+                    force = 10.0;
+                    
+                } else if (distance < insideRadius) {
+                    // Essentially touching - use wall normal
+                    // Calculate which face we're nearest
+                    const leftDist = Math.abs(this.position.x - wall.x);
+                    const rightDist = Math.abs(this.position.x - (wall.x + wall.w));
+                    const topDist = Math.abs(this.position.y - wall.y);
+                    const bottomDist = Math.abs(this.position.y - (wall.y + wall.h));
+                    
+                    const minEdgeDist = Math.min(leftDist, rightDist, topDist, bottomDist);
+                    
+                    if (minEdgeDist === leftDist) {
+                        dirX = -1; dirY = 0;
+                    } else if (minEdgeDist === rightDist) {
+                        dirX = 1; dirY = 0;
+                    } else if (minEdgeDist === topDist) {
+                        dirX = 0; dirY = -1;
+                    } else {
+                        dirX = 0; dirY = 1;
+                    }
+                    
+                    force = 8.0;
+                    
+                } else {
+                    // Outside but nearby - normal avoidance
+                    dirX = dx / distance;
+                    dirY = dy / distance;
+                    
+                    if (distance < urgentRadius) {
+                        // Emergency avoidance
+                        force = 6.0 * (1 - distance / urgentRadius);
+                        
+                        // Add tangential component to slide along walls
+                        const tangentX = -dirY;
+                        const tangentY = dirX;
+                        const tangentForce = force * 0.4;
+                        
+                        totalForce.x += tangentX * tangentForce;
+                        totalForce.y += tangentY * tangentForce;
+                        
+                    } else {
+                        // Normal avoidance
+                        force = 3.0 * (1 - distance / detectionRadius);
+                    }
+                }
+                
+                // Add repulsion force
+                totalForce.x += dirX * force;
+                totalForce.y += dirY * force;
             }
         }
         
-        // If we found a nearby obstacle
-        if (closestObstacle && closestObstacle.distance < detectionRadius) {
-            const { dx, dy, distance } = closestObstacle;
-            
-            if (distance < 1) return steer; // Too close to compute, skip
-            
-            // Stronger force when very close
-            let force;
-            if (distance < urgentRadius) {
-                // Emergency avoidance - very strong
-                force = 5.0 * (1 - distance / urgentRadius);
-            } else {
-                // Normal avoidance
-                force = 2.0 * (1 - distance / detectionRadius);
-            }
-            
-            // Push away from obstacle
-            steer.x = (dx / distance) * force;
-            steer.y = (dy / distance) * force;
-            
-            // Add tangential component to prevent corner-sticking
-            // Rotate 90 degrees to get tangent direction
-            const tangentX = -dy / distance;
-            const tangentY = dx / distance;
-            
-            // Bias toward tangent when very close to prevent getting stuck
-            if (distance < urgentRadius) {
-                const tangentForce = force * 0.5;
-                steer.x += tangentX * tangentForce;
-                steer.y += tangentY * tangentForce;
-            }
+        // Average forces if multiple obstacles
+        if (obstacleCount > 0) {
+            steer.x = totalForce.x / obstacleCount;
+            steer.y = totalForce.y / obstacleCount;
         }
         
         // Normalize and scale
         const magnitude = Math.hypot(steer.x, steer.y);
         if (magnitude > 0) {
-            steer.x = (steer.x / magnitude) * this.maxForce * 4;
-            steer.y = (steer.y / magnitude) * this.maxForce * 4;
+            const scale = Math.min(magnitude, this.maxForce * 5) / magnitude;
+            steer.x = steer.x * scale;
+            steer.y = steer.y * scale;
         }
         
         return steer;

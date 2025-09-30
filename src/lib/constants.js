@@ -11,13 +11,13 @@ export const COLOR_NAMES = {
     '#FF1493': 'AI Swarm'
 };
 
-// Arena configuration - VERTICAL orientation (portrait)
-export const ARENA_W = 1600;  // Narrower width
-export const ARENA_H = 3200;  // Taller height
+// Arena configuration - VERTICAL orientation (portrait) - TWICE AS WIDE
+export const ARENA_W = 3200;  // 2x wider (was 1600)
+export const ARENA_H = 3200;  // Square arena
 export const SECTOR_W = 800;
 export const SECTOR_H = 800;  // Square sectors
-export const SECTOR_COLS = 2;  // 2 columns
-export const SECTOR_ROWS = 4;  // 4 rows (vertical)
+export const SECTOR_COLS = 4;  // 4 columns (was 2)
+export const SECTOR_ROWS = 4;  // 4 rows
 
 // Generate sector labels (A1, A2, B1, B2, etc.)
 export const SECTOR_LABELS = [];
