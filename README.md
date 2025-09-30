@@ -15,11 +15,20 @@ A tactical boids-based strategy game inspired by Ender's Game, where you command
 
 ### Controls
 
+#### Desktop
 - **Left Click & Hold**: Attract your boids (player boids only respond)
 - **Shift + Drag**: Pan camera around the arena
-- **Mouse Wheel / Pinch**: Zoom in/out
+- **Mouse Wheel**: Zoom in/out
 - **Click Power-up Buttons**: Deploy bombs or tractor beams (with friendly fire risk)
 - **PAUSE Button**: Open tactical briefing to adjust doctrine
+
+#### Mobile (Touch)
+- **Tap & Hold**: Attract your boids (shows cyan touch indicator)
+- **Two-Finger Pinch**: Zoom in/out
+- **Two-Finger Drag**: Pan camera around arena
+- **Tap Power-up Button** (⚡ bottom-right): Open power-up menu
+- **Tap Power-up Icon**: Deploy bomb or tractor beam at screen center
+- **Tap Pause Button** (⏸ top-right): Open tactical briefing
 
 ### Game Features
 
@@ -80,12 +89,29 @@ npm install
 # Start dev server
 npm run dev
 
+# Test on mobile (use local network IP shown in terminal)
+# e.g., http://192.168.x.x:5173
+
 # Run tests
 npm test
 
 # Build for production
 npm run build
 ```
+
+## Mobile Testing
+
+The game is fully optimized for mobile! See [MOBILE_TESTING.md](./MOBILE_TESTING.md) for:
+- Touch gesture controls
+- UI testing checklist
+- Performance tips
+- Troubleshooting guide
+
+**Quick Mobile Test:**
+1. Start dev server: `npm run dev`
+2. Note the network URL (e.g., `http://192.168.1.x:5173`)
+3. Open that URL on your phone (same WiFi network)
+4. Use touch gestures to play!
 
 ## Game Design Notes
 

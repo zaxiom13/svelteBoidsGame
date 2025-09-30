@@ -389,11 +389,14 @@ export class Boid {
         const dy = this.position.y - mouseSettings.position.y;
         const distance = Math.sqrt(dx * dx + dy * dy);
 
-        if (distance < mouseSettings.repulsionRadius) {
-            const repulsionStrength = (mouseSettings.repulsionRadius - distance) / mouseSettings.repulsionRadius;
+        if (distance < mouseSettings.repulsionRadius && distance > 0) {
+            const strength = (mouseSettings.repulsionRadius - distance) / mouseSettings.repulsionRadius;
+            // For Swarm Commander: attract player boids, repel others
+            // This is called mouseRepulsion but can be attraction with negative force
+            const direction = this.groupIndex === 0 ? -1 : 1; // Attract player team, repel AI
             return {
-                x: (dx / distance) * this.maxForce * repulsionStrength,
-                y: (dy / distance) * this.maxForce * repulsionStrength
+                x: (dx / distance) * this.maxForce * strength * direction,
+                y: (dy / distance) * this.maxForce * strength * direction
             };
         }
 
