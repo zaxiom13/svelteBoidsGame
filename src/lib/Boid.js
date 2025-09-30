@@ -455,6 +455,22 @@ export class Boid {
             }
         });
         
+        // If inside an OPEN door area, dampen avoidance to allow smooth passage
+        let inOpenDoorZone = false;
+        for (const door of DOORS) {
+            if (doorManager.isDoorOpen(door.id)) {
+                // Slight padding to keep corridor clear
+                const pad = 8;
+                if (
+                    this.position.x >= door.x - pad && this.position.x <= door.x + door.w + pad &&
+                    this.position.y >= door.y - pad && this.position.y <= door.y + door.h + pad
+                ) {
+                    inOpenDoorZone = true;
+                    break;
+                }
+            }
+        }
+        
         let totalForce = { x: 0, y: 0 };
         let obstacleCount = 0;
         
@@ -565,6 +581,11 @@ export class Boid {
             const scale = Math.min(magnitude, this.maxForce * 5) / magnitude;
             steer.x = steer.x * scale;
             steer.y = steer.y * scale;
+        }
+        
+        if (inOpenDoorZone) {
+            steer.x *= 0.15;
+            steer.y *= 0.15;
         }
         
         return steer;
