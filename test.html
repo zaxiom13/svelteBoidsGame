@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Debug Test</title>
+    <style>
+        body { font-family: monospace; padding: 20px; background: #000; color: #0f0; }
+        pre { background: #111; padding: 10px; border: 1px solid #0f0; }
+        .error { color: #f00; }
+        .success { color: #0f0; }
+    </style>
+</head>
+<body>
+    <h1>Swarm Commander - Debug Test</h1>
+    <div id="output"></div>
+    
+    <script type="module">
+        const output = document.getElementById('output');
+        
+        function log(msg, isError = false) {
+            const div = document.createElement('div');
+            div.className = isError ? 'error' : 'success';
+            div.textContent = msg;
+            output.appendChild(div);
+        }
+        
+        try {
+            log('1. Loading constants...');
+            const { ARENA_W, ARENA_H, WALLS, DOORS, SECTOR_W, SECTOR_H } = await import('./src/lib/constants.js');
+            log(`   Arena: ${ARENA_W}x${ARENA_H}`);
+            log(`   Walls: ${WALLS.length}`);
+            log(`   Doors: ${DOORS.length}`);
+            log(`   Sectors: ${SECTOR_W}x${SECTOR_H}`);
+            
+            log('2. Loading Boid class...');
+            const { Boid } = await import('./src/lib/Boid.js');
+            log('   Boid class loaded');
+            
+            log('3. Creating test boid...');
+            const testBoid = new Boid(400, 400, 2, 2, 0, ['#00FFFF', '#FF1493']);
+            log(`   Boid created at (${testBoid.position.x}, ${testBoid.position.y})`);
+            
+            log('4. Testing wall avoidance...');
+            const force = testBoid.avoidWalls();
+            log(`   Force: (${force.x.toFixed(2)}, ${force.y.toFixed(2)})`);
+            
+            log('5. Loading stores...');
+            const { boids } = await import('./src/lib/boidsStore.js');
+            log('   Stores loaded');
+            
+            log('6. Checking boid store...');
+            boids.subscribe(value => {
+                log(`   Boids in store: ${value.boids?.length || 0}`);
+                if (value.boids && value.boids.length > 0) {
+                    const first = value.boids[0];
+                    log(`   First boid: (${first.position.x.toFixed(0)}, ${first.position.y.toFixed(0)})`);
+                    log(`   Velocity: (${first.velocity.x.toFixed(2)}, ${first.velocity.y.toFixed(2)})`);
+                }
+            });
+            
+            log('7. Loading App component...');
+            const App = await import('./src/App.svelte');
+            log('   App component loaded');
+            
+            log('');
+            log('✓ ALL MODULES LOADED SUCCESSFULLY', false);
+            
+        } catch (err) {
+            log(`ERROR: ${err.message}`, true);
+            log(`Stack: ${err.stack}`, true);
+        }
+    </script>
+</body>
+</html>

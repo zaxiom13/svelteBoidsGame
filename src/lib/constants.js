@@ -88,44 +88,47 @@ export function generateWalls() {
     const doors = [];
     let doorId = 0;
     
-    // Vertical wall (center divider between columns)
-    const centerX = SECTOR_W - WALL_THICKNESS / 2;
-    for (let row = 0; row < SECTOR_ROWS; row++) {
-        const y = row * SECTOR_H;
-        const doorY = y + SECTOR_H / 2 - DOOR_WIDTH / 2;
+    // Vertical walls (dividers between columns)
+    for (let col = 1; col < SECTOR_COLS; col++) {
+        const wallX = col * SECTOR_W - WALL_THICKNESS / 2;
         
-        // Wall segment above door
-        if (doorY > y) {
-            staticWalls.push({
-                x: centerX,
-                y: y,
+        for (let row = 0; row < SECTOR_ROWS; row++) {
+            const y = row * SECTOR_H;
+            const doorY = y + SECTOR_H / 2 - DOOR_WIDTH / 2;
+            
+            // Wall segment above door
+            if (doorY > y) {
+                staticWalls.push({
+                    x: wallX,
+                    y: y,
+                    w: WALL_THICKNESS,
+                    h: doorY - y,
+                    isStatic: true
+                });
+            }
+            
+            // Door position (dynamic)
+            doors.push({
+                id: doorId++,
+                x: wallX,
+                y: doorY,
                 w: WALL_THICKNESS,
-                h: doorY - y,
-                isStatic: true
+                h: DOOR_WIDTH,
+                orientation: 'vertical',
+                isStatic: false
             });
-        }
-        
-        // Door position (dynamic)
-        doors.push({
-            id: doorId++,
-            x: centerX,
-            y: doorY,
-            w: WALL_THICKNESS,
-            h: DOOR_WIDTH,
-            orientation: 'vertical',
-            isStatic: false
-        });
-        
-        // Wall segment below door
-        const belowY = doorY + DOOR_WIDTH;
-        if (belowY < y + SECTOR_H) {
-            staticWalls.push({
-                x: centerX,
-                y: belowY,
-                w: WALL_THICKNESS,
-                h: y + SECTOR_H - belowY,
-                isStatic: true
-            });
+            
+            // Wall segment below door
+            const belowY = doorY + DOOR_WIDTH;
+            if (belowY < y + SECTOR_H) {
+                staticWalls.push({
+                    x: wallX,
+                    y: belowY,
+                    w: WALL_THICKNESS,
+                    h: y + SECTOR_H - belowY,
+                    isStatic: true
+                });
+            }
         }
     }
     
