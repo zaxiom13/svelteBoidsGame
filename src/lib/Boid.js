@@ -124,12 +124,26 @@ export class Boid {
 
         let acceleration = { x: 0, y: 0 };
 
-        // Apply forces directly with weights, removing the extra normalization step
+        // Apply forces directly with weights, with validation
         Object.entries(forces).forEach(([key, force]) => {
+            // Validate force before applying
+            if (!isFinite(force.x) || !isFinite(force.y)) {
+                console.warn(`Invalid force from ${key}:`, force);
+                return;
+            }
+            
             // Forces are already normalized in their respective calculation methods
             const strengthMult = key === 'mouseRepulsion' ? 1 : this.strengthMultiplier;
-            acceleration.x += force.x * weights[key] * strengthMult;
-            acceleration.y += force.y * weights[key] * strengthMult;
+            const weight = weights[key] || 0;
+            
+            const forceX = force.x * weight * strengthMult;
+            const forceY = force.y * weight * strengthMult;
+            
+            // Validate computed force
+            if (isFinite(forceX) && isFinite(forceY)) {
+                acceleration.x += forceX;
+                acceleration.y += forceY;
+            }
         });
 
         // Update velocity with acceleration
@@ -153,9 +167,26 @@ export class Boid {
             }
         }
 
+        // Validate velocity before applying
+        if (!isFinite(this.velocity.x) || !isFinite(this.velocity.y)) {
+            console.warn('Invalid velocity detected, resetting:', this.velocity);
+            this.velocity.x = Math.cos(Math.random() * Math.PI * 2) * 2;
+            this.velocity.y = Math.sin(Math.random() * Math.PI * 2) * 2;
+        }
+
         // Update position
         this.position.x += this.velocity.x;
         this.position.y += this.velocity.y;
+
+        // Validate position
+        if (!isFinite(this.position.x) || !isFinite(this.position.y)) {
+            console.error('Invalid position detected, resetting:', this.position);
+            // Reset to safe position
+            this.position.x = ARENA_W / 2;
+            this.position.y = ARENA_H / 2;
+            this.velocity.x = 0;
+            this.velocity.y = 0;
+        }
 
         // Clamp to arena bounds (no wrapping)
         this.position.x = Math.max(0, Math.min(ARENA_W, this.position.x));

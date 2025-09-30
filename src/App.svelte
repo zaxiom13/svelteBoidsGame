@@ -325,9 +325,9 @@
     
     const def = POWERUP_TYPES[type];
     
-    // Place at center of screen for mobile
-    const targetX = isMobile ? camera.x : mouseWorldPos.x;
-    const targetY = isMobile ? camera.y : mouseWorldPos.y;
+    // ALWAYS place at last touch/mouse position (not camera center)
+    const targetX = mouseWorldPos.x;
+    const targetY = mouseWorldPos.y;
     
     activePowerups.push({ 
       ...def, 
@@ -338,7 +338,7 @@
     
     powerupCooldowns[type] = def.cooldown;
     morale[TEAM.PLAYER] = Math.max(0, morale[TEAM.PLAYER] - MORALE_DECAY_PER_POWERUP);
-    alerts.push({ id: Date.now(), text: `${type} deployed`, time: Date.now() });
+    alerts.push({ id: Date.now(), text: `${type} deployed at touch`, time: Date.now() });
   }
   
   function countTeams() {

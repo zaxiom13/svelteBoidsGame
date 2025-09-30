@@ -1,7 +1,7 @@
 import { writable, get } from 'svelte/store';
 import { Boid } from './Boid.js';
 import { gameState } from './gameStore';
-import { BOID_COLORS, TEAM, ARENA_W, ARENA_H, WALLS } from './constants';
+import { BOID_COLORS, TEAM, ARENA_W, ARENA_H, WALLS, DOORS, SECTOR_W, SECTOR_H } from './constants';
 import { Quadtree } from './Quadtree.js';
 
 export { BOID_COLORS };  // Re-export for backward compatibility
@@ -59,43 +59,71 @@ export const mouseSettings = writable({
     active: true
 });
 
-// Helper to check if position is inside any wall
-function isInsideWall(x, y) {
-    return WALLS.some(wall =>
-        x >= wall.x && x <= wall.x + wall.w &&
-        y >= wall.y && y <= wall.y + wall.h
-    );
+// Helper to check if position is inside any obstacle
+function isInsideObstacle(x, y, buffer = 50) {
+    // Check walls
+    for (const wall of WALLS) {
+        if (x >= wall.x - buffer && x <= wall.x + wall.w + buffer &&
+            y >= wall.y - buffer && y <= wall.y + wall.h + buffer) {
+            return true;
+        }
+    }
+    
+    // Check doors
+    for (const door of DOORS) {
+        if (x >= door.x - buffer && x <= door.x + door.w + buffer &&
+            y >= door.y - buffer && y <= door.y + door.h + buffer) {
+            return true;
+        }
+    }
+    
+    return false;
 }
 
-// Helper to find empty spawn position
-function findEmptySpot(arenaW, arenaH, attempts = 50) {
+// Helper to find empty spawn position in a specific sector
+function findEmptySpotInSector(sectorX, sectorY, sectorW, sectorH, attempts = 100) {
+    const margin = 80; // Keep away from edges
+    
     for (let i = 0; i < attempts; i++) {
-        const x = Math.random() * (arenaW - 40) + 20;
-        const y = Math.random() * (arenaH - 40) + 20;
-        if (!isInsideWall(x, y)) {
+        const x = sectorX + margin + Math.random() * (sectorW - margin * 2);
+        const y = sectorY + margin + Math.random() * (sectorH - margin * 2);
+        
+        if (!isInsideObstacle(x, y, 40)) {
             return { x, y };
         }
     }
-    // Fallback: return a safe position
-    return { x: arenaW / 4, y: arenaH / 4 };
+    
+    // Fallback: center of sector
+    return { 
+        x: sectorX + sectorW / 2, 
+        y: sectorY + sectorH / 2 
+    };
 }
 
 function createBoids(numBoids, canvasWidth, canvasHeight, groupCount) {
     const boids = [];
     const boidsPerTeam = Math.floor(numBoids / 2);
     
+    // For vertical layout: spawn in top and bottom sectors
+    // Player spawns in A1 (top-left) and B1 (top-right)
+    // AI spawns in A4 (bottom-left) and B4 (bottom-right)
+    
     for (let i = 0; i < numBoids; i++) {
         const groupIndex = i < boidsPerTeam ? TEAM.PLAYER : TEAM.AI;
         
-        // Spawn in different sides: Player on left, AI on right
         let pos;
         if (groupIndex === TEAM.PLAYER) {
-            // Spawn player boids in left half
-            pos = findEmptySpot(ARENA_W / 2, ARENA_H);
+            // Spawn in top sectors (row 0)
+            const col = i % 2; // Alternate between left and right
+            const sectorX = col * SECTOR_W;
+            const sectorY = 0;
+            pos = findEmptySpotInSector(sectorX, sectorY, SECTOR_W, SECTOR_H);
         } else {
-            // Spawn AI boids in right half
-            const rightPos = findEmptySpot(ARENA_W / 2, ARENA_H);
-            pos = { x: rightPos.x + ARENA_W / 2, y: rightPos.y };
+            // Spawn in bottom sectors (row 3)
+            const col = i % 2; // Alternate between left and right
+            const sectorX = col * SECTOR_W;
+            const sectorY = 3 * SECTOR_H;
+            pos = findEmptySpotInSector(sectorX, sectorY, SECTOR_W, SECTOR_H);
         }
         
         const speed = 2 + Math.random() * 2;
@@ -105,6 +133,7 @@ function createBoids(numBoids, canvasWidth, canvasHeight, groupCount) {
         
         boids.push(new Boid(pos.x, pos.y, vx, vy, groupIndex, BOID_COLORS));
     }
+    
     return boids;
 }
 
