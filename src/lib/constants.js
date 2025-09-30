@@ -31,8 +31,8 @@ for (let row = 0; row < SECTOR_ROWS; row++) {
 // Wall configuration - create silo/prison layout with SLIDING DOORS
 export const WALL_THICKNESS = 40;
 export const DOOR_WIDTH = 200;  // Width of the door opening
-export const DOOR_CYCLE_MS = 5000;  // 5 seconds per cycle
-export const DOOR_OPEN_DURATION = 2500;  // Door stays open for 2.5s
+export const DOOR_CYCLE_MS = 7000;  // 7 seconds per cycle (longer open time)
+export const DOOR_OPEN_DURATION = 3500;  // Door stays open for 3.5s (full half-cycle)
 
 // Door state management
 export class DoorManager {

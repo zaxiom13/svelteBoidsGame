@@ -520,10 +520,10 @@
       }
     });
     
-    // Draw boids (smaller, simpler)
+    // Draw boids and small tails (3-4 points)
     $boids.boids.forEach(boid => {
       const angle = Math.atan2(boid.velocity.y, boid.velocity.x);
-      const size = $visualSettings.boidSize / camera.zoom;
+      const size = $visualSettings.boidSize;
       
       ctx.save();
       ctx.translate(boid.position.x, boid.position.y);
@@ -546,6 +546,24 @@
       }
       
       ctx.restore();
+
+      // Tail rendering: connect last few trail points with fading alpha
+      const trailPoints = boid.trail || [];
+      const tailCount = Math.min(trailPoints.length, $visualSettings.trailLength);
+      if (tailCount >= 2) {
+        ctx.save();
+        ctx.globalAlpha = $visualSettings.trailOpacity;
+        ctx.strokeStyle = boid.color;
+        ctx.lineWidth = Math.max(0.5, $visualSettings.trailWidth / camera.zoom);
+        ctx.beginPath();
+        for (let i = tailCount - 1; i >= 0; i--) {
+          const p = trailPoints[trailPoints.length - 1 - i];
+          if (i === tailCount - 1) ctx.moveTo(p.x, p.y);
+          else ctx.lineTo(p.x, p.y);
+        }
+        ctx.stroke();
+        ctx.restore();
+      }
     });
     
     ctx.restore();
