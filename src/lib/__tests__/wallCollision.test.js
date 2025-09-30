@@ -135,8 +135,8 @@ describe('Wall Collision Tests', () => {
         const force = boid.avoidWalls();
         
         const magnitude = Math.sqrt(force.x * force.x + force.y * force.y);
-        // Expect very small avoidance while inside open door corridor
-        expect(magnitude).toBeLessThan(0.2);
+        // Expect zero avoidance while inside open door corridor
+        expect(magnitude).toBeLessThan(0.05);
       }
     });
     

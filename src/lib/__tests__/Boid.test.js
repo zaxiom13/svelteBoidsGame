@@ -88,13 +88,13 @@ describe('Boid', () => {
         const boid = new Boid(100, 100, 1, 1, 0, mockColors);
         const quadtree = { query: vi.fn(() => []) }; // Mock quadtree
         const boidsData = {boids: [], quadtree}
-        boid.maxTrailLength = 5; // Set a small trail length for testing
+        boid.maxTrailLength = 4; // Small tail for performance
 
         for (let i = 0; i < 10; i++) {
             boid.update(800, 600, boidsData, { separation: 1, alignment: 1, cohesion: 1, groupRepulsion: 1, mouseRepulsion: 1 }, { min: 2, max: 4 }, { separationRadius: 25, neighborRadius: 50, trailLength: 5 }, { peerRadius: 50, peerPressure: 0.1, loyaltyFactor: 0.5 }, { active: false, position: { x: 0, y: 0 }, repulsionRadius: 100 });
         }
 
-        expect(boid.trail.length).toBeLessThanOrEqual(5);
+        expect(boid.trail.length).toBeLessThanOrEqual(4);
     });
 
     it('should detect powerup collision correctly', () => {

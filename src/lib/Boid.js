@@ -15,7 +15,7 @@ export class Boid {
         this.colors = colors;
         this.color = colors[groupIndex];
         this.trail = [];
-        this.maxTrailLength = 5;
+        this.maxTrailLength = 4;
         this.speedMultiplier = 1;
         this.sizeMultiplier = 1;
         this.strengthMultiplier = 1;
@@ -455,7 +455,7 @@ export class Boid {
             }
         });
         
-        // If inside an OPEN door area, dampen avoidance to allow smooth passage
+        // If inside an OPEN door area, disable avoidance to allow smooth passage
         let inOpenDoorZone = false;
         for (const door of DOORS) {
             if (doorManager.isDoorOpen(door.id)) {
@@ -583,11 +583,26 @@ export class Boid {
             steer.y = steer.y * scale;
         }
         
+        // If we're inside an open door, return zero avoidance to fully allow passage
         if (inOpenDoorZone) {
-            steer.x *= 0.15;
-            steer.y *= 0.15;
+            return { x: 0, y: 0 };
         }
-        
+
+        // Otherwise, if near an open door region, reduce repulsion slightly
+        for (const door of DOORS) {
+            if (doorManager.isDoorOpen(door.id)) {
+                const nearPad = 30;
+                if (
+                    this.position.x >= door.x - nearPad && this.position.x <= door.x + door.w + nearPad &&
+                    this.position.y >= door.y - nearPad && this.position.y <= door.y + door.h + nearPad
+                ) {
+                    steer.x *= 0.5;
+                    steer.y *= 0.5;
+                    break;
+                }
+            }
+        }
+
         return steer;
     }
 

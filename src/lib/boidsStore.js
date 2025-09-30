@@ -33,7 +33,7 @@ export const numGroups = writable(2); // Always 2 teams now
 
 export const visualSettings = writable({
     boidSize: 4,  // Much smaller - was 10
-    trailLength: 8,
+    trailLength: 4,
     trailWidth: 1,
     trailOpacity: 0.15,
     neighborRadius: 30,
