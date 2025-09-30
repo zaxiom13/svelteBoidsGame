@@ -1,17 +1,24 @@
 import { writable, get } from 'svelte/store';
 import { Boid } from './Boid.js';
 import { gameState } from './gameStore';
-import { BOID_COLORS } from './constants';
+import { BOID_COLORS, TEAM, ARENA_W, ARENA_H, WALLS, DOORS, SECTOR_W, SECTOR_H, SECTOR_COLS, SECTOR_ROWS } from './constants';
 import { Quadtree } from './Quadtree.js';
 
 export { BOID_COLORS };  // Re-export for backward compatibility
+
+// Doctrine settings - can be adjusted in pause screen
+export const doctrine = writable({
+    cohesion: 0.6,    // 0-1 scale
+    separation: 0.6,  // 0-1 scale
+    bravery: 0.5      // 0-1 scale (affects defection resistance)
+});
 
 export const weights = writable({
     separation: 2.0,
     alignment: 1.5,
     cohesion: 1.2,
-    groupRepulsion: 0, // Set to zero as requested
-    mouseRepulsion: 1.0
+    groupRepulsion: 0.3,
+    mouseRepulsion: 1.5
 });
 
 export const speeds = writable({
@@ -19,16 +26,16 @@ export const speeds = writable({
     max: 4
 });
 
-export const numBoids = writable(150); // Set to 150 as requested
-export const numGroups = writable(4);
+export const numBoids = writable(240); // 120 per team
+export const numGroups = writable(2); // Always 2 teams now
 
 export const visualSettings = writable({
-    boidSize: 10,
-    trailLength: 20,
-    trailWidth: 2,
-    trailOpacity: 0.25,
-    neighborRadius: 30, // Maximized neighbor radius for more influence
-    separationRadius: 25
+    boidSize: 4,  // Much smaller - was 10
+    trailLength: 8,
+    trailWidth: 1,
+    trailOpacity: 0.15,
+    neighborRadius: 30,
+    separationRadius: 20
 });
 
 export const groupSettings = writable({
@@ -52,25 +59,90 @@ export const mouseSettings = writable({
     active: true
 });
 
+// Helper to check if position is inside any obstacle
+function isInsideObstacle(x, y, buffer = 50) {
+    // Check walls
+    for (const wall of WALLS) {
+        if (x >= wall.x - buffer && x <= wall.x + wall.w + buffer &&
+            y >= wall.y - buffer && y <= wall.y + wall.h + buffer) {
+            return true;
+        }
+    }
+    
+    // Check doors
+    for (const door of DOORS) {
+        if (x >= door.x - buffer && x <= door.x + door.w + buffer &&
+            y >= door.y - buffer && y <= door.y + door.h + buffer) {
+            return true;
+        }
+    }
+    
+    return false;
+}
+
+// Helper to find empty spawn position in a specific sector
+function findEmptySpotInSector(sectorX, sectorY, sectorW, sectorH, attempts = 100) {
+    const margin = 80; // Keep away from edges
+    
+    for (let i = 0; i < attempts; i++) {
+        const x = sectorX + margin + Math.random() * (sectorW - margin * 2);
+        const y = sectorY + margin + Math.random() * (sectorH - margin * 2);
+        
+        if (!isInsideObstacle(x, y, 40)) {
+            return { x, y };
+        }
+    }
+    
+    // Fallback: center of sector
+    return { 
+        x: sectorX + sectorW / 2, 
+        y: sectorY + sectorH / 2 
+    };
+}
+
 function createBoids(numBoids, canvasWidth, canvasHeight, groupCount) {
     const boids = [];
+    const boidsPerTeam = Math.floor(numBoids / 2);
+    
+    // For square 4x4 arena: spawn in top and bottom rows
+    // Player spawns in top row (A1, B1, C1, D1)
+    // AI spawns in bottom row (A4, B4, C4, D4)
+    
     for (let i = 0; i < numBoids; i++) {
-        // Fix boid positioning to properly use full canvas height
-        const x = Math.random() * (canvasWidth - 20) + 10; // Keep boids 10px from edges
-        const y = Math.random() * (canvasHeight - 20) + 10;
-        const speed = 2 + Math.random() * 2; // Random speed between 2 and 4
+        const groupIndex = i < boidsPerTeam ? TEAM.PLAYER : TEAM.AI;
+        
+        let pos;
+        if (groupIndex === TEAM.PLAYER) {
+            // Spawn in top row sectors (row 0)
+            // Distribute across all 4 columns
+            const col = i % SECTOR_COLS;
+            const sectorX = col * SECTOR_W;
+            const sectorY = 0;
+            pos = findEmptySpotInSector(sectorX, sectorY, SECTOR_W, SECTOR_H);
+        } else {
+            // Spawn in bottom row sectors (row 3)
+            // Distribute across all 4 columns
+            const col = (i - boidsPerTeam) % SECTOR_COLS;
+            const sectorX = col * SECTOR_W;
+            const sectorY = 3 * SECTOR_H;
+            pos = findEmptySpotInSector(sectorX, sectorY, SECTOR_W, SECTOR_H);
+        }
+        
+        const speed = 2 + Math.random() * 2;
         const angle = Math.random() * Math.PI * 2;
         const vx = Math.cos(angle) * speed;
         const vy = Math.sin(angle) * speed;
-        const groupIndex = i % groupCount;
-        boids.push(new Boid(x, y, vx, vy, groupIndex, BOID_COLORS));
+        
+        boids.push(new Boid(pos.x, pos.y, vx, vy, groupIndex, BOID_COLORS));
     }
+    
     return boids;
 }
 
 function createBoidsAndQuadtree(numBoids, canvasWidth, canvasHeight, groupCount) {
     const boids = createBoids(numBoids, canvasWidth, canvasHeight, groupCount);
-    const quadtree = new Quadtree({ x: 0, y: 0, width: canvasWidth, height: canvasHeight }, 32);
+    // Use full arena dimensions for quadtree
+    const quadtree = new Quadtree({ x: 0, y: 0, width: ARENA_W, height: ARENA_H }, 32);
     
     // Force a full rebuild of the quadtree
     quadtree.clear();
@@ -81,9 +153,9 @@ function createBoidsAndQuadtree(numBoids, canvasWidth, canvasHeight, groupCount)
     return { boids, quadtree };
 }
 
-export const boids = writable(createBoidsAndQuadtree(get(numBoids), 800, 600, get(numGroups)));
+export const boids = writable(createBoidsAndQuadtree(get(numBoids), ARENA_W, ARENA_H, get(numGroups)));
 
-export function resetBoids(count, canvasWidth, canvasHeight, groupCount) {
+export function resetBoids(count, groupCount) {
     // Only reset game state when manually resetting boids during a running game
     const currentGameState = get(gameState);
     if (currentGameState.status === 'running' || currentGameState.status === 'countdown') {
@@ -100,14 +172,8 @@ export function resetBoids(count, canvasWidth, canvasHeight, groupCount) {
         });
     }
 
-    // Validate dimensions
-    // if (!canvasWidth || !canvasHeight) {
-    //     console.warn('Invalid canvas dimensions, using defaults');
-    //     canvasWidth = window.innerWidth * 0.8;
-    //     canvasHeight = window.innerHeight * 0.8;
-    // }
-
-    const boidsData = createBoidsAndQuadtree(count, canvasWidth, canvasHeight, groupCount);
+    // Use ARENA dimensions (not canvas dimensions)
+    const boidsData = createBoidsAndQuadtree(count, ARENA_W, ARENA_H, groupCount);
     boids.set(boidsData);
 }
 
@@ -160,5 +226,5 @@ export function randomizeConfiguration() {
         loyaltyFactor: Math.random()
     }));
     
-    resetBoids(get(numBoids), 800, 600, get(numGroups));
+    resetBoids(get(numBoids), get(numGroups));
 }

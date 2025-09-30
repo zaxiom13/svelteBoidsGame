@@ -1,47 +1,143 @@
-# Svelte + Vite
+# Swarm Commander
 
-This template should help get you started developing with Svelte in Vite.
+A tactical boids-based strategy game inspired by Ender's Game, where you command a swarm against an AI opponent through subtle influence and mechanistic power-ups.
 
-## Recommended IDE Setup
+## Game Concept
 
-[VS Code](https://code.visualstudio.com/) + [Svelte](https://marketplace.visualstudio.com/items?itemName=svelte.svelte-vscode).
+**Swarm Commander** pits you against an AI in a battle for swarm dominance. Victory comes through achieving a monoculture—converting all boids to your team through defection mechanics. Your swarm isn't fully under your control; they follow their own rules first, and you simply tilt the balance.
 
-## Need an official Svelte framework?
+### Core Mechanics
 
-Check out [SvelteKit](https://github.com/sveltejs/kit#readme), which is also powered by Vite. Deploy anywhere with its serverless-first approach and adapt to various platforms, with out of the box support for TypeScript, SCSS, and Less, and easily-added support for mdsvex, GraphQL, PostCSS, Tailwind CSS, and more.
+- **Two Teams**: Player (Cyan) vs AI (Pink)
+- **Mutual Defection**: Boids can switch teams based on peer pressure and morale
+- **Morale System**: Using power-ups decreases your morale, affecting defection resistance
+- **Win Condition**: Achieve monoculture (all boids on one team) or eliminate the enemy
 
-## Technical considerations
+### Controls
 
-**Why use this over SvelteKit?**
+#### Desktop
+- **Left Click & Hold**: Attract your boids (player boids only respond)
+- **Shift + Drag**: Pan camera around the arena
+- **Mouse Wheel**: Zoom in/out
+- **Click Power-up Buttons**: Deploy bombs or tractor beams (with friendly fire risk)
+- **PAUSE Button**: Open tactical briefing to adjust doctrine
 
-- It brings its own routing solution which might not be preferable for some users.
-- It is first and foremost a framework that just happens to use Vite under the hood, not a Vite app.
+#### Mobile (Touch)
+- **Tap & Hold**: Attract your boids (shows cyan touch indicator)
+- **Two-Finger Pinch**: Zoom in/out
+- **Two-Finger Drag**: Pan camera around arena
+- **Tap Power-up Button** (⚡ bottom-right): Open power-up menu
+- **Tap Power-up Icon**: Deploy bomb or tractor beam at screen center
+- **Tap Pause Button** (⏸ top-right): Open tactical briefing
 
-This template contains as little as possible to get started with Vite + Svelte, while taking into account the developer experience with regards to HMR and intellisense. It demonstrates capabilities on par with the other `create-vite` templates and is a good starting point for beginners dipping their toes into a Vite + Svelte project.
+### Game Features
 
-Should you later need the extended capabilities and extensibility provided by SvelteKit, the template has been structured similarly to SvelteKit so that it is easy to migrate.
+#### Square Arena with Sliding Doors
+- **3200×3200 square layout** (works great on mobile & desktop)
+- **4×4 sector grid** (16 sectors: A1-D1, A2-D2, A3-D3, A4-D4)
+- **Silo/prison layout** with solid walls between sectors
+- **Sliding doors** open/close periodically (5s cycles)
+  - Even doors open first half of cycle
+  - Odd doors open second half
+  - Creates dynamic tactical flow
+- **Advanced collision system**:
+  - Boids cannot penetrate walls (3-tier detection)
+  - Smooth sliding along wall surfaces
+  - No corner-sticking
+  - Emergency escape when inside obstacles
 
-**Why `global.d.ts` instead of `compilerOptions.types` inside `jsconfig.json` or `tsconfig.json`?**
+#### Camera System
+- **Zoom range**: 0.15x - 1.8x
+  - Min zoom: Arena takes ~50% of screen (strategic overview)
+  - Max zoom: Close tactical view (individual boid detail)
+- Smooth zoom interpolation
+- Pinch-to-zoom and wheel zoom support
+- Two-finger pan for camera movement
+- Mini-map HUD shows walls/geometry and current view
 
-Setting `compilerOptions.types` shuts out all other types not explicitly listed in the configuration. Using triple-slash references keeps the default TypeScript setting of accepting type information from the entire workspace, while also adding `svelte` and `vite/client` type information.
+#### Tactical Pause Screen
+- **Doctrine Toggles**: Adjust Cohesion, Separation, and Bravery
+  - **Cohesion**: How strongly boids stick together
+  - **Separation**: How much boids avoid crowding
+  - **Bravery**: Resistance to defection
+- **Unpause Ramp**: 0.75s slow-motion on resume for smooth re-entry
 
-**Why include `.vscode/extensions.json`?**
+#### Mechanistic Power-ups
+- **BOMB**: Timed fuse → radial impulse blast (affects both teams!)
+- **TRACTOR BEAM**: Temporary pull field (lasts 2 seconds)
+- Each power-up has cooldowns and reduces your morale
 
-Other templates indirectly recommend extensions via the README, but this file allows VS Code to prompt the user to install the recommended extension upon opening the project.
+#### Military HUD
+- Morale bars for both teams
+- Team counts (Player vs AI)
+- Mini-map with camera view indicator
+- Alert notifications
+- Power-up buttons with cooldown indicators
 
-**Why enable `checkJs` in the JS template?**
+### PRD Features Implemented
 
-It is likely that most cases of changing variable types in runtime are likely to be accidental, rather than deliberate. This provides advanced typechecking out of the box. Should you like to take advantage of the dynamically-typed nature of JavaScript, it is trivial to change the configuration.
+✅ **Transform arena**: Silo/prison grid layout with walls and tunnels  
+✅ **Camera system**: Pinch-zoom, pan, mini-map HUD  
+✅ **Two teams**: Player vs AI with monoculture win condition  
+✅ **Morale system**: Tied to power-up usage  
+✅ **Mechanistic power-ups**: Bomb and Tractor Beam with friendly fire  
+✅ **Tactical pause**: Doctrine toggles (Cohesion/Separation/Bravery)  
+✅ **Player-only influence**: Touch/tap only attracts player boids  
+✅ **Unpause ramp**: 0.75s slow-mo on resume  
+✅ **Ender's Game aesthetic**: Top-down military HUD, clean interface  
 
-**Why is HMR not preserving my local component state?**
+### Technical Stack
 
-HMR state preservation comes with a number of gotchas! It has been disabled by default in both `svelte-hmr` and `@sveltejs/vite-plugin-svelte` due to its often surprising behavior. You can read the details [here](https://github.com/sveltejs/svelte-hmr/tree/master/packages/svelte-hmr#preservation-of-local-state).
+- **Svelte** + **Vite** for fast reactive UI
+- **Canvas 2D API** for rendering
+- **Boids Algorithm** with wall avoidance and defection mechanics
+- **Quadtree** spatial indexing for performance
 
-If you have state that's important to retain within a component, consider creating an external store which would not be replaced by HMR.
+## Development
 
-```js
-// store.js
-// An extremely simple external store
-import { writable } from 'svelte/store'
-export default writable(0)
+```bash
+# Install dependencies
+npm install
+
+# Start dev server
+npm run dev
+
+# Test on mobile (use local network IP shown in terminal)
+# e.g., http://192.168.x.x:5173
+
+# Run tests
+npm test
+
+# Build for production
+npm run build
 ```
+
+## Mobile Testing
+
+The game is fully optimized for mobile! See [MOBILE_TESTING.md](./MOBILE_TESTING.md) for:
+- Touch gesture controls
+- UI testing checklist
+- Performance tips
+- Troubleshooting guide
+
+**Quick Mobile Test:**
+1. Start dev server: `npm run dev`
+2. Note the network URL (e.g., `http://192.168.1.x:5173`)
+3. Open that URL on your phone (same WiFi network)
+4. Use touch gestures to play!
+
+## Game Design Notes
+
+The tension in Swarm Commander comes from:
+
+1. **Limited control**: You nudge, you don't command directly
+2. **Morale trade-off**: Power-ups help tactically but hurt loyalty
+3. **Friendly fire**: Bombs and beams affect both teams equally
+4. **Peer pressure**: Outnumbered boids may defect to the stronger side
+5. **Spatial strategy**: Walls and tunnels create choke points and flow control
+
+The game loop lasts 3-4 minutes, with quick, intense matches that reward both micro (local influence) and macro (doctrine + power-up timing) play.
+
+## License
+
+MIT

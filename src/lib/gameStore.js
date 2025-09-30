@@ -37,10 +37,10 @@ export function moveToPlayerSelection() {
 export function startGame(pickedGroup) {
     const currentNumBoids = get(numBoids);
     const currentNumGroups = get(numGroups);
-    const canvas = document.querySelector('canvas');
     
-    // Reset boids using actual canvas dimensions
-    resetBoids(currentNumBoids, canvas.width, canvas.height, currentNumGroups);
+    // Reset boids using ARENA dimensions (not canvas dimensions!)
+    // Canvas is for display, arena is the game world
+    resetBoids(currentNumBoids, currentNumGroups);
 
     gameState.update(state => ({
         ...state,

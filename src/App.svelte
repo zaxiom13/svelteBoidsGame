@@ -1,514 +1,935 @@
 <script>
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import { get } from 'svelte/store';
-  import { boids, weights, speeds, visualSettings, groupSettings, mouseSettings, numGroups, BOID_COLORS, resetBoids, numBoids } from './lib/boidsStore';
-  import { gameState, endGame } from './lib/gameStore';
-  import { addScore } from './lib/leaderboardStore';
-  import { COLOR_NAMES } from './lib/constants';
-  import ControlPanel from './lib/ControlPanel.svelte';
-  import StartScreen from './lib/StartScreen.svelte';
-  import GameOverScreen from './lib/GameOverScreen.svelte';
-  import GroupStats from './lib/GroupStats.svelte';
-  import Timer from './lib/Timer.svelte';
-  import Leaderboard from './lib/Leaderboard.svelte';
-  import Countdown from './lib/Countdown.svelte';
-  import { powerupSettings, activePowerups, activePowerupEffects, spawnPowerup, removePowerup, addPowerupEffect } from './lib/powerupStore';
-  import PowerupNotification from './lib/PowerupNotification.svelte';
-  import EliminationScreen from './lib/EliminationScreen.svelte';
+  import { 
+    boids, weights, speeds, visualSettings, groupSettings, mouseSettings, 
+    numGroups, BOID_COLORS, resetBoids, numBoids, doctrine 
+  } from './lib/boidsStore';
+  import { gameState, startGame, endGame } from './lib/gameStore';
+  import { 
+    TEAM, COLOR_NAMES, ARENA_W, ARENA_H, WALLS, DOORS, doorManager,
+    SECTOR_W, SECTOR_H, SECTOR_LABELS, SECTOR_COLS, SECTOR_ROWS, 
+    START_MORALE, MORALE_RECOVERY_RATE, MORALE_DECAY_PER_POWERUP, POWERUP_TYPES
+  } from './lib/constants';
+
+  let canvas, ctx;
+  let canvasWidth = window.innerWidth;
+  let canvasHeight = window.innerHeight;
+  let isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
   
-  let canvas;
-  let ctx;
-  let lastGroupCounts = {};
-  let dominantColor = '#000000';
-  let powerupSpawnInterval;
+  // Camera state - adjusted for square arena (3200x3200)
+  let camera = { x: ARENA_W / 2, y: ARENA_H / 2, zoom: 0.25, targetZoom: 0.25 };
+  // Min zoom: arena takes ~50% of screen (can zoom out more than arena size)
+  const minZoom = 0.15;  // Can see arena + surrounding space
+  const maxZoom = 1.8;   // Can zoom in very close
+  
+  // Touch state
+  let touches = [];
+  let lastPinchDist = null;
+  let isDraggingCamera = false;
+  let isTouchingBoids = false;
+  let lastTouchPos = { x: 0, y: 0 };
+  let mouseWorldPos = { x: ARENA_W / 2, y: ARENA_H / 2 };
+  
+  // Game state
+  let morale = { [TEAM.PLAYER]: START_MORALE, [TEAM.AI]: START_MORALE };
+  let isPaused = false, slowMoRemaining = 0;
+  let activePowerups = [], powerupCooldowns = { BOMB: 0, TRACTOR: 0 };
+  let alerts = [];
+  let animationFrameId = null;
+  
+  // UI state
+  let showPowerupMenu = false;
+  let uiScale = 1;
   
   onMount(() => {
-      ctx = canvas.getContext('2d');
-      resizeCanvas();
-      resetBoids(get(numBoids), canvas.width, canvas.height, get(numGroups));
-      window.addEventListener('resize', resizeCanvas);
-      requestAnimationFrame(update);
+    ctx = canvas.getContext('2d', { alpha: false });
+    updateCanvasSize();
+    startGame(TEAM.PLAYER);
+    
+    // Calculate UI scale for mobile
+    uiScale = Math.min(window.innerWidth / 400, 1.2);
+    
+    window.addEventListener('resize', updateCanvasSize);
+    setupTouchEvents();
+    
+    animationFrameId = requestAnimationFrame(update);
+    
+    return () => {
+      window.removeEventListener('resize', updateCanvasSize);
+      if (animationFrameId) cancelAnimationFrame(animationFrameId);
+    };
   });
-
-  // Add a proper $: reactive statement for game state
-  $: {
-      if ($gameState.status === 'running') {
-          if (!powerupSpawnInterval) {
-              powerupSpawnInterval = setInterval(() => {
-                  spawnPowerup(canvas.width, canvas.height);
-              }, $powerupSettings.spawnInterval);
-          }
-      } else if (powerupSpawnInterval) {
-          clearInterval(powerupSpawnInterval);
-          powerupSpawnInterval = null;
-      }
-  }
-
-  function countGroups() {
-      const counts = {};
-      $boids.boids.forEach(boid => {
-          counts[boid.groupIndex] = (counts[boid.groupIndex] || 0) + 1;
-      });
-      return counts;
+  
+  function updateCanvasSize() {
+    canvasWidth = window.innerWidth;
+    canvasHeight = window.innerHeight;
+    canvas.width = canvasWidth;
+    canvas.height = canvasHeight;
+    uiScale = Math.min(window.innerWidth / 400, 1.2);
   }
   
-  function getDominantGroup(counts) {
-      let maxCount = 0;
-      let dominantGroup = 0;
-      let totalBoids = 0;
-      
-      // First pass: count total boids and find max
-      Object.entries(counts).forEach(([group, count]) => {
-          totalBoids += count;
-          if (count > maxCount) {
-              maxCount = count;
-              dominantGroup = parseInt(group);
-          }
-      });
-
-      // Only consider it dominant if it actually has boids
-      if (maxCount === 0) {
-          return { group: null, ratio: 0 };
-      }
-
-      return { 
-          group: dominantGroup, 
-          ratio: maxCount / totalBoids,
-          totalBoids 
-      };
-  }
-  
-  function checkForWinner(groupCounts) {
-      // Clean up any zero-count groups
-      Object.keys(groupCounts).forEach(key => {
-          if (groupCounts[key] === 0) {
-              delete groupCounts[key];
-          }
-      });
-
-      // Get active groups
-      const activeGroups = Object.keys(groupCounts)
-          .map(g => parseInt(g))
-          .filter(g => groupCounts[g] > 0);
-      
-      // First check if player's pick has been eliminated
-      if ($gameState.playerPick !== null && !groupCounts[$gameState.playerPick]) {
-          // Update game state to indicate player elimination without ending the game
-          if (!$gameState.isEliminated) {
-              gameState.update(state => ({
-                  ...state,
-                  isEliminated: true,
-                  showEliminationScreen: true
-              }));
-          }
-          
-          // Only end the game if there's a final winner
-          if (activeGroups.length === 1) {
-              endGame($gameState.playerPick, true, activeGroups[0]);
-              return null;
-          }
-      }
-
-      // Check if any group has absolute dominance
-      const { group, ratio, totalBoids } = getDominantGroup(groupCounts);
-      
-      // Only declare winner if there are actually boids and one group has them all
-      if (totalBoids > 0 && ratio === 1) {
-          const playerWon = group === $gameState.playerPick;
-          if (playerWon) {
-              addScore({
-                  time: Date.now() - $gameState.startTime,
-                  groupIndex: group,
-                  wasCorrect: true
-              });
-          }
-          endGame(group, false);
-          return group;
-      }
-      return null;
-  }
-  
-  function resizeCanvas() {
-      canvas.width = window.innerWidth * 0.8;
-      canvas.height = window.innerHeight * 0.8;
-      
-      // Only update quadtree bounds without resetting boids
-      if ($boids.quadtree) {
-          $boids.quadtree.bounds = {
-              x: 0,
-              y: 0,
-              width: canvas.width,
-              height: canvas.height
-          };
-          
-          // Update quadtree with existing boids
-          $boids.quadtree.clear();
-          for (const boid of $boids.boids) {
-              // Keep boids within new canvas bounds
-              if (boid.position.x > canvas.width) boid.position.x = canvas.width;
-              if (boid.position.y > canvas.height) boid.position.y = canvas.height;
-              $boids.quadtree.insert(boid);
-          }
-      }
-  }
-
-  function drawFish(x, y, vx, vy, color, size, isSelectedGroup, powerupGlow) {
-      const angle = Math.atan2(vy, vx);
-  
-      ctx.save();
-      ctx.translate(x, y);
-      ctx.rotate(angle);
-  
-      // Draw powerup glow effect
-      if (powerupGlow) {
-          ctx.shadowColor = color;
-          ctx.shadowBlur = 15;
-          ctx.globalAlpha = 0.7;
-          
-          // Extra glow for powerup effect
-          ctx.beginPath();
-          ctx.moveTo(-size * 1.8, 0);
-          ctx.lineTo(-size * 1.2, -size * 1.2);
-          ctx.lineTo(size * 1.8, 0);
-          ctx.lineTo(-size * 1.2, size * 1.2);
-          ctx.closePath();
-          ctx.fillStyle = color;
-          ctx.fill();
-          
-          ctx.shadowBlur = 0;
-          ctx.globalAlpha = 1;
-      }
-
-      // Draw halo for selected group
-      if (isSelectedGroup) {
-          ctx.beginPath();
-          ctx.moveTo(-size * 1.5, 0);
-          ctx.lineTo(-size, -size);
-          ctx.lineTo(size * 1.5, 0);
-          ctx.lineTo(-size, size);
-          ctx.closePath();
-          ctx.strokeStyle = color;
-          ctx.lineWidth = 2;
-          ctx.globalAlpha = 0.3;
-          ctx.stroke();
-          ctx.globalAlpha = 1;
-      }
-  
-      // Draw fish body
-      ctx.beginPath();
-      ctx.moveTo(-size, 0);
-      ctx.lineTo(-size/2, -size/2);
-      ctx.lineTo(size, 0);
-      ctx.lineTo(-size/2, size/2);
-      ctx.closePath();
-      ctx.fillStyle = color;
-      ctx.fill();
-  
-      ctx.restore();
-  }
-
-  function handleMouseMove(event) {
-      const rect = canvas.getBoundingClientRect();
-      $mouseSettings.position = {
-          x: event.clientX - rect.left,
-          y: event.clientY - rect.top
-      };
-  }
-  
-  function update() {
-        if (!ctx) return;
-
-        // Calculate background color based on dominant group
-        if ($gameState.status === 'running') {
-            const currentGroups = countGroups();
-            const { group, ratio } = getDominantGroup(currentGroups);
-            const targetColor = BOID_COLORS[group] + '33'; // 20% opacity version of color
-            dominantColor = targetColor;
-            lastGroupCounts = currentGroups;
-        }
-
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.2)';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-        // Only update boid positions if game is running
-        if ($gameState.status === 'running') {
-            const boidsData = get(boids);
-            boidsData.boids.forEach(boid => {
-                boid.update(canvas.width, canvas.height, boidsData, $weights, $speeds, $visualSettings, $groupSettings, $mouseSettings, $activePowerupEffects);
-            });
-            boidsData.quadtree.update(boidsData.boids);
-        }
-
-        // Draw powerups
-        if ($gameState.status === 'running') {
-            $activePowerups.forEach(powerup => {
-                ctx.save();
-
-                // Draw glow effect
-                ctx.shadowColor = powerup.color;
-                ctx.shadowBlur = 15;
-
-                // Draw rotating square
-                const size = $powerupSettings.size;
-                const rotation = (Date.now() - powerup.createdAt) * 0.003;
-
-                ctx.translate(powerup.x, powerup.y);
-                ctx.rotate(rotation);
-
-                // Inner square
-                ctx.fillStyle = powerup.color;
-                ctx.fillRect(-size / 2, -size / 2, size, size);
-
-                // Outer rotating square
-                ctx.strokeStyle = powerup.color;
-                ctx.lineWidth = 2;
-                const outerSize = size * 1.5;
-                ctx.strokeRect(-outerSize / 2, -outerSize / 2, outerSize, outerSize);
-
-                // Icon based on powerup type
-                ctx.fillStyle = 'white';
-                ctx.font = '12px Arial';
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                ctx.rotate(-rotation); // Un-rotate for the icon
-                const icon = powerup.type === 'speed' ? '⚡' :
-                    powerup.type === 'size' ? '📏' : '💪';
-                ctx.fillText(icon, 0, 0);
-
-                ctx.restore();
-
-                // Check for collisions with player's group boids
-                $boids.boids.forEach(boid => {
-                    if (boid.checkPowerupCollision(powerup, size, $gameState.playerPick)) {
-                        removePowerup(powerup);
-                        addPowerupEffect($gameState.playerPick, powerup);
-                    }
-                });
-            });
-        }
-
-        // Always draw boids and trails, even when paused
-        $boids.boids.forEach(boid => {
-            // Draw trail
-            if (boid.trail.length > 1) {
-                ctx.beginPath();
-                ctx.moveTo(boid.trail[0].x, boid.trail[0].y);
-                for (let i = 1; i < boid.trail.length; i++) {
-                    ctx.lineTo(boid.trail[i].x, boid.trail[i].y);
-                }
-                const opacity = Math.floor($visualSettings.trailOpacity * 255).toString(16).padStart(2, '0');
-                ctx.strokeStyle = boid.color + opacity;
-                ctx.lineWidth = $visualSettings.trailWidth;
-                ctx.stroke();
-            }
-
-            // Check if boid has any active powerup effects
-            const hasPowerup = $activePowerupEffects.some(effect =>
-                effect.groupIndex === boid.groupIndex
-            );
-
-            // Draw fish with size multiplier and powerup glow
-            const effectiveSize = $visualSettings.boidSize * (boid.sizeMultiplier || 1);
-            drawFish(
-                boid.position.x,
-                boid.position.y,
-                boid.velocity.x,
-                boid.velocity.y,
-                boid.color,
-                effectiveSize,
-                $gameState.status === 'running' && boid.groupIndex === $gameState.playerPick,
-                hasPowerup
-            );
-        });
-
-        // Update group counts and check for winner
-        if ($gameState.status === 'running') {
-            const winner = checkForWinner(lastGroupCounts);
-            if (winner !== null) {
-                endGame(winner);
-            }
-        }
-
-        requestAnimationFrame(update);
+  function setupTouchEvents() {
+    canvas.addEventListener('touchstart', handleTouchStart, { passive: false });
+    canvas.addEventListener('touchmove', handleTouchMove, { passive: false });
+    canvas.addEventListener('touchend', handleTouchEnd, { passive: false });
+    canvas.addEventListener('touchcancel', handleTouchEnd, { passive: false });
+    
+    if (!isMobile) {
+      canvas.addEventListener('wheel', handleWheel, { passive: false });
+      canvas.addEventListener('mousedown', handleMouseDown);
+      canvas.addEventListener('mousemove', handleMouseMove);
+      canvas.addEventListener('mouseup', handleMouseUp);
+      canvas.addEventListener('click', handleClick);
     }
-  </script>
+  }
   
-  <main style="--background-color: {dominantColor}" on:mousemove={handleMouseMove}>
-      <canvas bind:this={canvas} style="border: 4px solid {dominantColor ? dominantColor.slice(0, -2) : '#000'}"></canvas>
+  function screenToWorld(screenX, screenY) {
+    return {
+      x: (screenX - canvasWidth / 2) / camera.zoom + camera.x,
+      y: (screenY - canvasHeight / 2) / camera.zoom + camera.y
+    };
+  }
+  
+  function worldToScreen(worldX, worldY) {
+    return {
+      x: (worldX - camera.x) * camera.zoom + canvasWidth / 2,
+      y: (worldY - camera.y) * camera.zoom + canvasHeight / 2
+    };
+  }
+  
+  function handleTouchStart(e) {
+    e.preventDefault();
+    touches = Array.from(e.touches);
+    
+    if (touches.length === 1) {
+      const touch = touches[0];
+      const x = touch.clientX;
+      const y = touch.clientY;
       
-      {#if $gameState.status === 'running'}
-          <div class="titlebar" style="--color: {BOID_COLORS[$gameState.playerPick]}">
-              {#if $gameState.isEliminated && !$gameState.showEliminationScreen}
-                  <span class="spectator">Spectating</span>
-              {:else if !$gameState.isEliminated}
-                  Your Team: {COLOR_NAMES[BOID_COLORS[$gameState.playerPick]]}
-              {/if}
-          </div>
-      {/if}
+      // Check if touching UI elements
+      if (isTouchingUI(x, y)) {
+        handleUITouch(x, y);
+        return;
+      }
+      
+      // Otherwise, touch for boid influence
+      lastTouchPos = { x, y };
+      mouseWorldPos = screenToWorld(x, y);
+      isTouchingBoids = true;
+      
+    } else if (touches.length === 2) {
+      // Two finger pinch/pan
+      isTouchingBoids = false;
+      isDraggingCamera = true;
+      const dx = touches[0].clientX - touches[1].clientX;
+      const dy = touches[0].clientY - touches[1].clientY;
+      lastPinchDist = Math.sqrt(dx * dx + dy * dy);
+      
+      // Center point for panning
+      lastTouchPos = {
+        x: (touches[0].clientX + touches[1].clientX) / 2,
+        y: (touches[0].clientY + touches[1].clientY) / 2
+      };
+    }
+  }
   
-      {#if $gameState.status === 'config'}
-          <div class="control-container config-mode">
-              <ControlPanel />
-          </div>
-      {:else if $gameState.status === 'start'}
-          <div class="control-container">
-              <StartScreen />
-          </div>
-      {:else if $gameState.status === 'countdown'}
-          <Countdown />
-      {:else if $gameState.status === 'finished'}
-          <GameOverScreen />
-      {/if}
+  function handleTouchMove(e) {
+    e.preventDefault();
+    touches = Array.from(e.touches);
+    
+    if (touches.length === 1 && isTouchingBoids) {
+      const touch = touches[0];
+      mouseWorldPos = screenToWorld(touch.clientX, touch.clientY);
+      lastTouchPos = { x: touch.clientX, y: touch.clientY };
+      
+    } else if (touches.length === 2) {
+      // Pinch zoom
+      const dx = touches[0].clientX - touches[1].clientX;
+      const dy = touches[0].clientY - touches[1].clientY;
+      const newDist = Math.sqrt(dx * dx + dy * dy);
+      
+      if (lastPinchDist) {
+        const zoomDelta = (newDist - lastPinchDist) * 0.005;
+        camera.targetZoom = Math.max(minZoom, Math.min(maxZoom, camera.targetZoom * (1 + zoomDelta)));
+      }
+      lastPinchDist = newDist;
+      
+      // Pan camera
+      const centerX = (touches[0].clientX + touches[1].clientX) / 2;
+      const centerY = (touches[0].clientY + touches[1].clientY) / 2;
+      
+      if (lastTouchPos.x && lastTouchPos.y) {
+        const dx = centerX - lastTouchPos.x;
+        const dy = centerY - lastTouchPos.y;
+        camera.x -= dx / camera.zoom;
+        camera.y -= dy / camera.zoom;
+        camera.x = Math.max(0, Math.min(ARENA_W, camera.x));
+        camera.y = Math.max(0, Math.min(ARENA_H, camera.y));
+      }
+      
+      lastTouchPos = { x: centerX, y: centerY };
+    }
+  }
   
-      {#if $gameState.status === 'running' && $gameState.showEliminationScreen}
-          <EliminationScreen />
-      {/if}
+  function handleTouchEnd(e) {
+    e.preventDefault();
+    touches = Array.from(e.touches);
+    
+    if (touches.length === 0) {
+      isTouchingBoids = false;
+      isDraggingCamera = false;
+      lastPinchDist = null;
+    } else if (touches.length === 1) {
+      // Switched from 2 finger to 1 finger
+      lastPinchDist = null;
+      isDraggingCamera = false;
+      const touch = touches[0];
+      lastTouchPos = { x: touch.clientX, y: touch.clientY };
+      mouseWorldPos = screenToWorld(touch.clientX, touch.clientY);
+      isTouchingBoids = true;
+    }
+  }
   
-      {#if $gameState.status === 'running'}
-          <GroupStats groupCounts={lastGroupCounts} />
-          <Timer />
-      {/if}
-      <Leaderboard />
-      <PowerupNotification />
-  </main>
+  function handleWheel(e) {
+    e.preventDefault();
+    const delta = -e.deltaY * 0.001;
+    camera.targetZoom = Math.max(minZoom, Math.min(maxZoom, camera.targetZoom * (1 + delta)));
+  }
   
-  <style>
+  function handleMouseDown(e) {
+    if (e.button === 0) {
+      const x = e.clientX, y = e.clientY;
+      if (isTouchingUI(x, y)) return;
+      
+      lastTouchPos = { x, y };
+      mouseWorldPos = screenToWorld(x, y);
+      isTouchingBoids = true;
+    }
+  }
+  
+  function handleMouseMove(e) {
+    const x = e.clientX, y = e.clientY;
+    
+    if (e.shiftKey && isTouchingBoids) {
+      camera.x -= (x - lastTouchPos.x) / camera.zoom;
+      camera.y -= (y - lastTouchPos.y) / camera.zoom;
+      camera.x = Math.max(0, Math.min(ARENA_W, camera.x));
+      camera.y = Math.max(0, Math.min(ARENA_H, camera.y));
+    }
+    
+    if (isTouchingBoids) {
+      mouseWorldPos = screenToWorld(x, y);
+    }
+    
+    lastTouchPos = { x, y };
+  }
+  
+  function handleMouseUp(e) {
+    isTouchingBoids = false;
+  }
+  
+  function handleClick(e) {
+    const x = e.clientX, y = e.clientY;
+    handleUITouch(x, y);
+  }
+  
+  function isTouchingUI(x, y) {
+    // Pause button (top-right)
+    const pauseBtnSize = 50 * uiScale;
+    const pauseBtnX = canvasWidth - pauseBtnSize - 10 * uiScale;
+    const pauseBtnY = 10 * uiScale;
+    if (x >= pauseBtnX && x <= pauseBtnX + pauseBtnSize && 
+        y >= pauseBtnY && y <= pauseBtnY + pauseBtnSize) {
+      return true;
+    }
+    
+    // Power-up button (bottom-right on mobile, bottom-left on desktop)
+    const powerBtnSize = 60 * uiScale;
+    const powerBtnX = isMobile ? canvasWidth - powerBtnSize - 10 * uiScale : 10 * uiScale;
+    const powerBtnY = canvasHeight - powerBtnSize - 10 * uiScale;
+    if (x >= powerBtnX && x <= powerBtnX + powerBtnSize && 
+        y >= powerBtnY && y <= powerBtnY + powerBtnSize) {
+      return true;
+    }
+    
+    // Power-up menu items
+    if (showPowerupMenu) {
+      const menuItems = Object.keys(POWERUP_TYPES);
+      const itemSize = 55 * uiScale;
+      const menuX = isMobile ? canvasWidth - itemSize - 10 * uiScale : 10 * uiScale;
+      let menuY = canvasHeight - powerBtnSize - 20 * uiScale;
+      
+      for (let i = 0; i < menuItems.length; i++) {
+        menuY -= itemSize + 5 * uiScale;
+        if (x >= menuX && x <= menuX + itemSize && 
+            y >= menuY && y <= menuY + itemSize) {
+          return true;
+        }
+      }
+    }
+    
+    return false;
+  }
+  
+  function handleUITouch(x, y) {
+    // Pause button
+    const pauseBtnSize = 50 * uiScale;
+    const pauseBtnX = canvasWidth - pauseBtnSize - 10 * uiScale;
+    const pauseBtnY = 10 * uiScale;
+    if (x >= pauseBtnX && x <= pauseBtnX + pauseBtnSize && 
+        y >= pauseBtnY && y <= pauseBtnY + pauseBtnSize) {
+      togglePause();
+      return;
+    }
+    
+    // Power-up menu toggle
+    const powerBtnSize = 60 * uiScale;
+    const powerBtnX = isMobile ? canvasWidth - powerBtnSize - 10 * uiScale : 10 * uiScale;
+    const powerBtnY = canvasHeight - powerBtnSize - 10 * uiScale;
+    if (x >= powerBtnX && x <= powerBtnX + powerBtnSize && 
+        y >= powerBtnY && y <= powerBtnY + powerBtnSize) {
+      showPowerupMenu = !showPowerupMenu;
+      return;
+    }
+    
+    // Power-up menu items
+    if (showPowerupMenu) {
+      const menuItems = Object.keys(POWERUP_TYPES);
+      const itemSize = 55 * uiScale;
+      const menuX = isMobile ? canvasWidth - itemSize - 10 * uiScale : 10 * uiScale;
+      let menuY = canvasHeight - powerBtnSize - 20 * uiScale;
+      
+      for (let i = 0; i < menuItems.length; i++) {
+        menuY -= itemSize + 5 * uiScale;
+        const key = menuItems[i];
+        if (x >= menuX && x <= menuX + itemSize && 
+            y >= menuY && y <= menuY + itemSize) {
+          placePowerup(key);
+          showPowerupMenu = false;
+          return;
+        }
+      }
+    }
+  }
+  
+  function togglePause() {
+    isPaused = !isPaused;
+    if (!isPaused) slowMoRemaining = 750;
+  }
+  
+  function placePowerup(type) {
+    if (powerupCooldowns[type] > 0) {
+      alerts.push({ id: Date.now(), text: `${type} on cooldown`, time: Date.now() });
+      return;
+    }
+    
+    const def = POWERUP_TYPES[type];
+    
+    // ALWAYS place at last touch/mouse position (not camera center)
+    const targetX = mouseWorldPos.x;
+    const targetY = mouseWorldPos.y;
+    
+    activePowerups.push({ 
+      ...def, 
+      x: targetX, 
+      y: targetY, 
+      placedAt: Date.now() 
+    });
+    
+    powerupCooldowns[type] = def.cooldown;
+    morale[TEAM.PLAYER] = Math.max(0, morale[TEAM.PLAYER] - MORALE_DECAY_PER_POWERUP);
+    alerts.push({ id: Date.now(), text: `${type} deployed at touch`, time: Date.now() });
+  }
+  
+  function countTeams() {
+    const counts = { [TEAM.PLAYER]: 0, [TEAM.AI]: 0 };
+    $boids.boids.forEach(b => { 
+      if (counts[b.groupIndex] !== undefined) counts[b.groupIndex]++; 
+    });
+    return counts;
+  }
+  
+  function update(timestamp) {
+    if (!ctx) return;
+    
+    camera.zoom += (camera.targetZoom - camera.zoom) * 0.15;
+    
+    const dt = 16;
+    Object.keys(powerupCooldowns).forEach(k => {
+      if (powerupCooldowns[k] > 0) powerupCooldowns[k] = Math.max(0, powerupCooldowns[k] - dt);
+    });
+    
+    if (slowMoRemaining > 0) slowMoRemaining = Math.max(0, slowMoRemaining - dt);
+    
+    ctx.fillStyle = '#0a0a0a';
+    ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+    
+    ctx.save();
+    ctx.translate(canvasWidth / 2, canvasHeight / 2);
+    ctx.scale(camera.zoom, camera.zoom);
+    ctx.translate(-camera.x, -camera.y);
+    
+    // Draw arena
+    ctx.strokeStyle = '#333';
+    ctx.lineWidth = 4 / camera.zoom;
+    ctx.strokeRect(0, 0, ARENA_W, ARENA_H);
+    
+    ctx.strokeStyle = '#1a1a1a';
+    ctx.lineWidth = 1 / camera.zoom;
+    for (let col = 1; col < SECTOR_COLS; col++) {
+      ctx.beginPath();
+      ctx.moveTo(col * SECTOR_W, 0);
+      ctx.lineTo(col * SECTOR_W, ARENA_H);
+      ctx.stroke();
+    }
+    for (let row = 1; row < SECTOR_ROWS; row++) {
+      ctx.beginPath();
+      ctx.moveTo(0, row * SECTOR_H);
+      ctx.lineTo(ARENA_W, row * SECTOR_H);
+      ctx.stroke();
+    }
+    
+    // Draw static walls
+    ctx.fillStyle = '#555';
+    WALLS.forEach(w => ctx.fillRect(w.x, w.y, w.w, w.h));
+    
+    // Draw doors (with animation)
+    DOORS.forEach(door => {
+      const openAmount = doorManager.getDoorOpenAmount(door.id);
+      
+      if (openAmount < 1) {
+        // Door is closed or closing
+        ctx.fillStyle = openAmount < 0.1 ? '#444' : `rgba(68, 68, 68, ${1 - openAmount * 0.7})`;
+        
+        if (door.orientation === 'horizontal') {
+          // Horizontal door - slides up/down
+          const slideOffset = door.h * openAmount;
+          ctx.fillRect(door.x, door.y + slideOffset, door.w, door.h * (1 - openAmount));
+        } else {
+          // Vertical door - slides left/right
+          const slideOffset = door.w * openAmount;
+          ctx.fillRect(door.x + slideOffset, door.y, door.w * (1 - openAmount), door.h);
+        }
+      }
+      
+      // Draw door frame/outline
+      ctx.strokeStyle = openAmount > 0.5 ? '#0F0' : '#666';
+      ctx.lineWidth = 2 / camera.zoom;
+      ctx.strokeRect(door.x, door.y, door.w, door.h);
+    });
+    
+    // Update boids
+    if (!isPaused && $gameState.status === 'running') {
+      const boidsData = get(boids);
+      const currentDoctrine = get(doctrine);
+      const currentWeights = get(weights);
+      
+      const doctrineWeights = {
+        ...currentWeights,
+        cohesion: currentWeights.cohesion * (0.5 + currentDoctrine.cohesion),
+        separation: currentWeights.separation * (0.5 + currentDoctrine.separation)
+      };
+      
+      boidsData.boids.forEach(boid => {
+        const mouseSettingsForBoid = boid.groupIndex === TEAM.PLAYER && isTouchingBoids
+          ? { ...$mouseSettings, position: mouseWorldPos, active: true, repulsionRadius: 120 }
+          : { ...$mouseSettings, active: false };
+        
+        boid.update(ARENA_W, ARENA_H, boidsData, doctrineWeights, $speeds, $visualSettings, 
+          { ...$groupSettings, loyaltyFactor: currentDoctrine.bravery }, mouseSettingsForBoid, []);
+      });
+      
+      boidsData.quadtree.update(boidsData.boids);
+      
+      // Process power-ups
+      activePowerups = activePowerups.filter(powerup => {
+        const elapsed = Date.now() - powerup.placedAt;
+        
+        if (powerup.type === 'BOMB' && elapsed >= powerup.fuseMs) {
+          boidsData.boids.forEach(boid => {
+            const dx = boid.position.x - powerup.x, dy = boid.position.y - powerup.y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist < powerup.radius) {
+              const force = (1 - dist / powerup.radius) * powerup.impulse;
+              boid.velocity.x += (dx / dist) * force;
+              boid.velocity.y += (dy / dist) * force;
+            }
+          });
+          return false;
+        }
+        
+        if (powerup.type === 'TRACTOR' && elapsed < powerup.durationMs) {
+          boidsData.boids.forEach(boid => {
+            const dx = powerup.x - boid.position.x, dy = powerup.y - boid.position.y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist < powerup.radius && dist > 0) {
+              boid.velocity.x += (dx / dist) * powerup.pull;
+              boid.velocity.y += (dy / dist) * powerup.pull;
+            }
+          });
+          return true;
+        } else if (powerup.type === 'TRACTOR') {
+          return false;
+        }
+        
+        return true;
+      });
+      
+      morale[TEAM.PLAYER] = Math.min(1, morale[TEAM.PLAYER] + MORALE_RECOVERY_RATE);
+      morale[TEAM.AI] = Math.min(1, morale[TEAM.AI] + MORALE_RECOVERY_RATE);
+      
+      const teamCounts = countTeams();
+      if (teamCounts[TEAM.PLAYER] === 0) endGame(TEAM.AI, false);
+      else if (teamCounts[TEAM.AI] === 0) endGame(TEAM.PLAYER, false);
+    }
+    
+    // Draw powerups
+    activePowerups.forEach(powerup => {
+      const elapsed = Date.now() - powerup.placedAt;
+      
+      if (powerup.type === 'BOMB') {
+        const pulse = 0.6 + Math.sin(elapsed * 0.01) * 0.4;
+        ctx.fillStyle = powerup.color;
+        ctx.globalAlpha = pulse;
+        ctx.beginPath();
+        ctx.arc(powerup.x, powerup.y, 20 / camera.zoom, 0, Math.PI * 2);
+        ctx.fill();
+        
+        ctx.strokeStyle = powerup.color;
+        ctx.globalAlpha = 0.2;
+        ctx.lineWidth = 3 / camera.zoom;
+        ctx.beginPath();
+        ctx.arc(powerup.x, powerup.y, powerup.radius, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      } else if (powerup.type === 'TRACTOR') {
+        ctx.strokeStyle = powerup.color;
+        ctx.globalAlpha = 0.3;
+        ctx.lineWidth = 4 / camera.zoom;
+        ctx.beginPath();
+        ctx.arc(powerup.x, powerup.y, powerup.radius, 0, Math.PI * 2);
+        ctx.stroke();
+        
+        ctx.fillStyle = powerup.color;
+        ctx.globalAlpha = 0.8;
+        ctx.beginPath();
+        ctx.arc(powerup.x, powerup.y, 15 / camera.zoom, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      }
+    });
+    
+    // Draw boids (smaller, simpler)
+    $boids.boids.forEach(boid => {
+      const angle = Math.atan2(boid.velocity.y, boid.velocity.x);
+      const size = $visualSettings.boidSize / camera.zoom;
+      
+      ctx.save();
+      ctx.translate(boid.position.x, boid.position.y);
+      ctx.rotate(angle);
+      
+      // Simple triangle shape
+      ctx.beginPath();
+      ctx.moveTo(size * 2, 0);
+      ctx.lineTo(-size, -size);
+      ctx.lineTo(-size, size);
+      ctx.closePath();
+      ctx.fillStyle = boid.color;
+      ctx.fill();
+      
+      // Optional: tiny glow for visibility
+      if (camera.zoom > 0.8) {
+        ctx.strokeStyle = boid.color;
+        ctx.lineWidth = 0.5 / camera.zoom;
+        ctx.stroke();
+      }
+      
+      ctx.restore();
+    });
+    
+    ctx.restore();
+    
+    drawHUD();
+    alerts = alerts.filter(a => Date.now() - a.time < 3000);
+    
+    animationFrameId = requestAnimationFrame(update);
+  }
+  
+  function drawHUD() {
+    const teamCounts = countTeams();
+    const fontSize = Math.floor(12 * uiScale);
+    const padding = 10 * uiScale;
+    
+    // Mini-map (bottom-right for mobile, top-right for desktop)
+    const mapSize = isMobile ? 120 * uiScale : 150 * uiScale;
+    const mapX = canvasWidth - mapSize - padding;
+    const mapY = isMobile ? canvasHeight - mapSize - 80 * uiScale : 70 * uiScale;
+    const mapScale = mapSize / Math.max(ARENA_W, ARENA_H);
+    
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+    ctx.fillRect(mapX, mapY, mapSize, mapSize);
+    ctx.strokeStyle = '#444';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(mapX, mapY, mapSize, mapSize);
+    
+    ctx.fillStyle = '#333';
+    WALLS.forEach(w => ctx.fillRect(
+      mapX + w.x * mapScale, 
+      mapY + w.y * mapScale, 
+      Math.max(1, w.w * mapScale), 
+      Math.max(1, w.h * mapScale)
+    ));
+    
+    const viewW = (canvasWidth / camera.zoom) * mapScale;
+    const viewH = (canvasHeight / camera.zoom) * mapScale;
+    const viewX = mapX + camera.x * mapScale - viewW / 2;
+    const viewY = mapY + camera.y * mapScale - viewH / 2;
+    ctx.strokeStyle = '#00FFFF';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(viewX, viewY, viewW, viewH);
+    
+    // Morale bars (top-left)
+    const barW = isMobile ? 120 * uiScale : 180 * uiScale;
+    const barH = 15 * uiScale;
+    let barY = padding;
+    
+    ctx.font = `${fontSize}px monospace`;
+    ctx.fillStyle = '#aaa';
+    ctx.fillText('PLAYER', padding, barY + fontSize);
+    barY += fontSize + 3;
+    
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+    ctx.fillRect(padding, barY, barW, barH);
+    ctx.fillStyle = morale[TEAM.PLAYER] > 0.5 ? '#00FFFF' : '#FF4500';
+    ctx.fillRect(padding, barY, barW * morale[TEAM.PLAYER], barH);
+    ctx.strokeStyle = '#555';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(padding, barY, barW, barH);
+    
+    ctx.font = `bold ${Math.floor(14 * uiScale)}px monospace`;
+    ctx.fillStyle = '#00FFFF';
+    ctx.textAlign = 'right';
+    ctx.fillText(teamCounts[TEAM.PLAYER].toString(), padding + barW - 3, barY + barH - 3);
+    ctx.textAlign = 'left';
+    
+    barY += barH + padding;
+    ctx.font = `${fontSize}px monospace`;
+    ctx.fillStyle = '#aaa';
+    ctx.fillText('AI', padding, barY + fontSize);
+    barY += fontSize + 3;
+    
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+    ctx.fillRect(padding, barY, barW, barH);
+    ctx.fillStyle = morale[TEAM.AI] > 0.5 ? '#FF1493' : '#FF4500';
+    ctx.fillRect(padding, barY, barW * morale[TEAM.AI], barH);
+    ctx.strokeStyle = '#555';
+    ctx.strokeRect(padding, barY, barW, barH);
+    
+    ctx.font = `bold ${Math.floor(14 * uiScale)}px monospace`;
+    ctx.fillStyle = '#FF1493';
+    ctx.textAlign = 'right';
+    ctx.fillText(teamCounts[TEAM.AI].toString(), padding + barW - 3, barY + barH - 3);
+    ctx.textAlign = 'left';
+    
+    // Pause button (top-right)
+    const pauseBtnSize = 50 * uiScale;
+    const pauseBtnX = canvasWidth - pauseBtnSize - padding;
+    const pauseBtnY = padding;
+    
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+    ctx.fillRect(pauseBtnX, pauseBtnY, pauseBtnSize, pauseBtnSize);
+    ctx.strokeStyle = '#00FFFF';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(pauseBtnX, pauseBtnY, pauseBtnSize, pauseBtnSize);
+    
+    ctx.font = `${Math.floor(20 * uiScale)}px monospace`;
+    ctx.fillStyle = '#00FFFF';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(isPaused ? '▶' : '⏸', pauseBtnX + pauseBtnSize / 2, pauseBtnY + pauseBtnSize / 2);
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
+    
+    // Power-up button (bottom-right for mobile, bottom-left for desktop)
+    const powerBtnSize = 60 * uiScale;
+    const powerBtnX = isMobile ? canvasWidth - powerBtnSize - padding : padding;
+    const powerBtnY = canvasHeight - powerBtnSize - padding;
+    
+    ctx.fillStyle = showPowerupMenu ? 'rgba(0, 100, 100, 0.9)' : 'rgba(0, 0, 0, 0.8)';
+    ctx.fillRect(powerBtnX, powerBtnY, powerBtnSize, powerBtnSize);
+    ctx.strokeStyle = showPowerupMenu ? '#00FFFF' : '#666';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(powerBtnX, powerBtnY, powerBtnSize, powerBtnSize);
+    
+    ctx.font = `${Math.floor(24 * uiScale)}px monospace`;
+    ctx.fillStyle = '#fff';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('⚡', powerBtnX + powerBtnSize / 2, powerBtnY + powerBtnSize / 2);
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
+    
+    // Power-up menu
+    if (showPowerupMenu) {
+      const menuItems = Object.entries(POWERUP_TYPES);
+      const itemSize = 55 * uiScale;
+      const menuX = isMobile ? canvasWidth - itemSize - padding : padding;
+      let menuY = powerBtnY - 5 * uiScale;
+      
+      menuItems.forEach(([key, powerup]) => {
+        menuY -= itemSize + 5 * uiScale;
+        const onCooldown = powerupCooldowns[key] > 0;
+        
+        ctx.fillStyle = onCooldown ? 'rgba(50, 50, 50, 0.9)' : 'rgba(0, 0, 0, 0.9)';
+        ctx.fillRect(menuX, menuY, itemSize, itemSize);
+        ctx.strokeStyle = onCooldown ? '#555' : powerup.color;
+        ctx.lineWidth = 2;
+        ctx.strokeRect(menuX, menuY, itemSize, itemSize);
+        
+        ctx.font = `${Math.floor(10 * uiScale)}px monospace`;
+        ctx.fillStyle = onCooldown ? '#777' : '#fff';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+        ctx.fillText(key, menuX + itemSize / 2, menuY + 5);
+        
+        ctx.font = `${Math.floor(20 * uiScale)}px monospace`;
+        ctx.textBaseline = 'middle';
+        ctx.fillText(powerup.icon, menuX + itemSize / 2, menuY + itemSize * 0.6);
+        
+        if (onCooldown) {
+          const progress = 1 - powerupCooldowns[key] / powerup.cooldown;
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+          ctx.fillRect(menuX, menuY + itemSize - 4, itemSize * progress, 4);
+        }
+      });
+      
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'alphabetic';
+    }
+    
+    // Alerts (top-center)
+    let alertY = canvasHeight * 0.15;
+    alerts.forEach(alert => {
+      const age = Date.now() - alert.time;
+      const alpha = Math.max(0, 1 - age / 3000);
+      
+      ctx.font = `bold ${Math.floor(14 * uiScale)}px monospace`;
+      ctx.fillStyle = `rgba(255, 255, 100, ${alpha})`;
+      ctx.strokeStyle = `rgba(0, 0, 0, ${alpha})`;
+      ctx.lineWidth = 3;
+      ctx.textAlign = 'center';
+      ctx.strokeText(alert.text.toUpperCase(), canvasWidth / 2, alertY);
+      ctx.fillText(alert.text.toUpperCase(), canvasWidth / 2, alertY);
+      ctx.textAlign = 'left';
+      
+      alertY += 25 * uiScale;
+    });
+    
+    // Touch indicator (only on mobile when touching)
+    if (isMobile && isTouchingBoids) {
+      const screenPos = worldToScreen(mouseWorldPos.x, mouseWorldPos.y);
+      ctx.strokeStyle = '#00FFFF';
+      ctx.lineWidth = 3;
+      ctx.globalAlpha = 0.5;
+      ctx.beginPath();
+      ctx.arc(screenPos.x, screenPos.y, 40 * uiScale, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+  }
+</script>
+
+<main>
+  <canvas bind:this={canvas}></canvas>
+  
+  {#if $gameState.status === 'finished'}
+    <div class="overlay game-over">
+      <div class="panel">
+        <h1>MISSION {$gameState.winner === TEAM.PLAYER ? 'COMPLETE' : 'FAILED'}</h1>
+        <p>
+          {#if $gameState.winner === TEAM.PLAYER}
+            Monoculture achieved
+          {:else}
+            Swarm eliminated
+          {/if}
+        </p>
+        <button on:click={() => window.location.reload()}>NEW MISSION</button>
+      </div>
+    </div>
+  {/if}
+  
+  {#if isPaused && $gameState.status === 'running'}
+    <div class="overlay pause">
+      <div class="panel doctrine">
+        <h2>TACTICAL BRIEFING</h2>
+        <div class="settings">
+          <label>
+            <span>Cohesion</span>
+            <input type="range" min="0" max="1" step="0.1" bind:value={$doctrine.cohesion} />
+            <span class="value">{$doctrine.cohesion.toFixed(1)}</span>
+          </label>
+          <label>
+            <span>Separation</span>
+            <input type="range" min="0" max="1" step="0.1" bind:value={$doctrine.separation} />
+            <span class="value">{$doctrine.separation.toFixed(1)}</span>
+          </label>
+          <label>
+            <span>Bravery</span>
+            <input type="range" min="0" max="1" step="0.1" bind:value={$doctrine.bravery} />
+            <span class="value">{$doctrine.bravery.toFixed(1)}</span>
+          </label>
+        </div>
+        <button class="resume" on:click={togglePause}>RESUME</button>
+      </div>
+    </div>
+  {/if}
+</main>
+
+<style>
   main {
-      position: relative;
-      width: 100%;
-      height: 100%;
-      background-color: var(--background-color);
-      transition: background-color 1s ease;
-      display: flex;
-      justify-content: center;
-      align-items: center;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    background: #000;
+    touch-action: none;
+    -webkit-user-select: none;
+    user-select: none;
   }
-
+  
   canvas {
-      display: block;
-      background-color: transparent;
-      box-sizing: border-box;
-  }
-
-  .titlebar {
-      position: fixed;
-      top: 0;
-      left: 50%;
-      transform: translateX(-50%);
-      background: rgba(0, 0, 0, 0.8);
-      color: var(--color);
-      padding: 10px 20px;
-      border-radius: 0 0 8px 8px;
-      font-size: 18px;
-      font-weight: bold;
-      z-index: 100;
+    display: block;
+    width: 100%;
+    height: 100%;
+    touch-action: none;
   }
   
-  /* Control Container Styles */
-  .control-container {
-      position: absolute; /* Use absolute positioning for overlay */
-      top: 50%;
-      left: 50%;
-      transform: translate(-50%, -50%); /* Center the container */
-      width: 80%; /* Adjust width as needed */
-      max-width: 600px; /* Set a maximum width */
-      display: flex;
-      flex-direction: column; /* Stack ControlPanel and StartScreen vertically */
-      align-items: center; /* Center content horizontally */
-      gap: 20px; /* Space between ControlPanel and StartScreen */
-      pointer-events: auto; /* Enable interactions */
-      z-index: 10; /* Ensure controls are above the canvas */
+  .overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    background: rgba(0, 0, 0, 0.9);
+    z-index: 100;
+    touch-action: auto;
   }
   
-  /* Control Panel Styles */
-  .control-container > :global(.control-panel) {
-      background-color: rgba(255, 255, 255, 0.9);
-      border: 1px solid #ccc;
-      padding: 20px;
-      box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
-      border-radius: 8px;
-      width: 100%; /* Take full width of the container */
-      box-sizing: border-box; /* Include padding and border in the width */
-      display: grid; /* Or flex, depending on your ControlPanel's content */
-      grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); /* Responsive columns */
-      gap: 10px;
-      /* Customize scrollbar for Firefox */
-      scrollbar-color: black rgba(0, 0, 0, 0.1);
-      scrollbar-width: thick;
-      /* Customize scrollbar for Webkit browsers */
-      &::-webkit-scrollbar {
-          width: 28px;
-          height: 28px;
-      }
-      &::-webkit-scrollbar-track {
-          background: rgba(0, 0, 0, 0.1);
-          border-radius: 4px;
-      }
-      &::-webkit-scrollbar-thumb {
-          background-color: black;
-          border-radius: 4px;
-      }
+  .panel {
+    background: #0a0a0a;
+    border: 2px solid #00FFFF;
+    padding: clamp(20px, 5vw, 40px);
+    max-width: 90vw;
+    max-height: 90vh;
+    overflow-y: auto;
+    font-family: monospace;
+    text-align: center;
   }
   
-  /* Start Screen Styles */
-  .control-container > :global(.start-screen) {
-      background-color: rgba(240, 240, 240, 0.9);
-      border: 1px solid #ddd;
-      padding: 20px;
-      border-radius: 8px;
-      text-align: center;  /* Center the content */
-      width: 100%;
-      box-sizing: border-box;
+  .panel h1 {
+    color: #00FFFF;
+    font-size: clamp(20px, 6vw, 36px);
+    margin: 0 0 15px 0;
   }
   
-  /* Player Selection Styles (inside StartScreen) */
-  .control-container > :global(.start-screen .player-selection) {
-      display: flex;
-      flex-wrap: wrap; /* Allow buttons to wrap */
-      justify-content: center; /* Center buttons horizontally */
-      gap: 10px; /* Space between buttons */
-      margin-top: 15px;
+  .panel h2 {
+    color: #00FFFF;
+    font-size: clamp(16px, 4vw, 24px);
+    margin: 0 0 20px 0;
   }
   
-  /* Group Button Styles */
-  .control-container > :global(.start-screen .group-button) {
-      padding: 10px 20px;
-      font-size: 16px;
-      border: 2px solid #ccc;
-      border-radius: 5px;
-      background-color: white;
-      cursor: pointer;
-      transition: background-color 0.3s, border-color 0.3s;
-  }
-  .control-container > :global(.start-screen .group-button:hover){
-     background-color: #f0f0f0;
-      border-color: #999;
+  .panel p {
+    color: #ccc;
+    font-size: clamp(14px, 3.5vw, 18px);
+    margin: 0 0 20px 0;
   }
   
-  /* Responsive adjustments (optional, but recommended) */
-  @media (max-width: 768px) {
-      .control-container {
-          width: 95%; /* Wider on smaller screens */
-      }
+  .panel button {
+    background: #00FFFF;
+    color: #000;
+    border: none;
+    padding: clamp(10px, 3vw, 15px) clamp(20px, 5vw, 30px);
+    font-size: clamp(14px, 3.5vw, 16px);
+    font-family: monospace;
+    font-weight: bold;
+    cursor: pointer;
+    transition: all 0.2s;
+    touch-action: manipulation;
+    min-height: 44px;
   }
-
-  .config-mode {
-      background: rgba(0, 0, 0, 0.85);
-      width: 100%;
-      height: 100%;
-      max-width: none;
-      display: flex;
-      justify-content: center;
-      align-items: center;
+  
+  .panel button:active {
+    background: #00AAAA;
+    transform: scale(0.95);
   }
-
-  .config-mode :global(.control-panel) {
-      max-width: 1200px;
+  
+  .panel.doctrine {
+    min-width: min(350px, 90vw);
   }
-
-  .spectator {
-      color: #fff;
-      font-style: italic;
-      opacity: 0.8;
+  
+  .settings {
+    margin: 20px 0;
+    text-align: left;
   }
-  </style>
+  
+  .settings label {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 15px;
+    color: #ccc;
+    font-size: clamp(12px, 3vw, 14px);
+  }
+  
+  .settings label span:first-child {
+    min-width: 90px;
+  }
+  
+  .settings label span.value {
+    min-width: 30px;
+    text-align: right;
+    color: #00FFFF;
+  }
+  
+  .settings input[type="range"] {
+    flex: 1;
+    min-width: 0;
+    -webkit-appearance: none;
+    appearance: none;
+    height: 6px;
+    background: #333;
+    outline: none;
+    border-radius: 3px;
+  }
+  
+  .settings input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 20px;
+    height: 20px;
+    background: #00FFFF;
+    cursor: pointer;
+    border-radius: 50%;
+  }
+  
+  .settings input[type="range"]::-moz-range-thumb {
+    width: 20px;
+    height: 20px;
+    background: #00FFFF;
+    cursor: pointer;
+    border-radius: 50%;
+    border: none;
+  }
+  
+  .resume {
+    width: 100%;
+  }
+</style>

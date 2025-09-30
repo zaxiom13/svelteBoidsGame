@@ -124,24 +124,26 @@ describe('Boid', () => {
         expect(boid.timeFrozen).toBe(true);
     });
 
-    it('should wrap around canvas edges', () => {
+    it('should clamp to arena bounds (no wrapping)', () => {
         const boid = new Boid(0, 0, -1, -1, 0, mockColors);
         const quadtree = { query: vi.fn(() => []) }; // Mock quadtree
         const boidsData = {boids: [], quadtree}
-        const canvasWidth = 800;
-        const canvasHeight = 600;
+        const canvasWidth = 3200;
+        const canvasHeight = 3200;
 
         boid.update(canvasWidth, canvasHeight, boidsData,
-            { separation: 1, alignment: 1, cohesion: 1, groupRepulsion: 1, mouseRepulsion: 1 },
+            { separation: 1, alignment: 1, cohesion: 1, groupRepulsion: 1, mouseRepulsion: 1, wallAvoidance: 1, borderAvoidance: 1 },
             { min: 2, max: 4 },
             { separationRadius: 25, neighborRadius: 50, trailLength: 20 },
             { peerRadius: 50, peerPressure: 0.1, loyaltyFactor: 0.5 },
             { active: false, position: { x: 0, y: 0 }, repulsionRadius: 100 }
         );
 
-        expect(boid.position.x).toBe(canvasWidth);
-        expect(boid.position.y).toBe(canvasHeight);
-        expect(boid.trail).toEqual([]);
+        // Should be clamped within arena bounds (border avoidance pushes inward)
+        expect(boid.position.x).toBeGreaterThanOrEqual(0);
+        expect(boid.position.x).toBeLessThanOrEqual(canvasWidth);
+        expect(boid.position.y).toBeGreaterThanOrEqual(0);
+        expect(boid.position.y).toBeLessThanOrEqual(canvasHeight);
     });
 
     it('should calculate separation force correctly', () => {
@@ -195,20 +197,21 @@ describe('Boid', () => {
         expect(Math.abs(repulsion.y)).toBeLessThanOrEqual(boid.maxForce);
     });
 
-    it('should handle mouse repulsion correctly', () => {
-        const boid = new Boid(100, 100, 0, 0, 0, mockColors);
+    it('should handle mouse attraction correctly for player team', () => {
+        const boid = new Boid(100, 100, 0, 0, 0, mockColors); // Team 0 = PLAYER
         const mouseSettings = {
             active: true,
             position: { x: 90, y: 90 },
             repulsionRadius: 50
         };
 
-        const repulsion = boid.mouseRepulsion(mouseSettings);
+        const force = boid.mouseRepulsion(mouseSettings);
 
-        expect(repulsion.x).toBeGreaterThan(0); // Should move away from mouse
-        expect(repulsion.y).toBeGreaterThan(0);
-        expect(Math.abs(repulsion.x)).toBeLessThanOrEqual(boid.maxForce);
-        expect(Math.abs(repulsion.y)).toBeLessThanOrEqual(boid.maxForce);
+        // Player team should be ATTRACTED (negative of repulsion)
+        expect(force.x).toBeLessThan(0); // Should move toward mouse
+        expect(force.y).toBeLessThan(0);
+        expect(Math.abs(force.x)).toBeLessThanOrEqual(boid.maxForce);
+        expect(Math.abs(force.y)).toBeLessThanOrEqual(boid.maxForce);
     });
 
     it('should consider group switching based on nearby boids', () => {

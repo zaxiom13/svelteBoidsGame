@@ -1,3 +1,5 @@
+import { WALLS, DOORS, doorManager, ARENA_W, ARENA_H } from './constants';
+
 export class Boid {
     constructor(x, y, vx, vy, groupIndex, colors) {
         this.position = { x, y };
@@ -8,16 +10,17 @@ export class Boid {
             this.velocity = { x: vx, y: vy };
         }
         this.maxSpeed = 4;
-        this.maxForce = 0.8; // Increased from 0.2 to make forces more impactful
+        this.maxForce = 0.8;
         this.groupIndex = groupIndex;
         this.colors = colors;
         this.color = colors[groupIndex];
         this.trail = [];
-        this.maxTrailLength = 5; // Reduced from 20 to match test expectations
+        this.maxTrailLength = 5;
         this.speedMultiplier = 1;
         this.sizeMultiplier = 1;
         this.strengthMultiplier = 1;
         this.timeFrozen = false;
+        this.morale = 0.75; // Individual morale
     }
 
     checkPowerupCollision(powerup, powerupSize, playerGroup) {
@@ -114,17 +117,33 @@ export class Boid {
             alignment: this.align(quadtree, visualSettings.neighborRadius * sizeInfluence),
             cohesion: this.cohesion(quadtree, visualSettings.neighborRadius * sizeInfluence),
             groupRepulsion: this.groupRepulsion(quadtree, visualSettings.neighborRadius * sizeInfluence),
-            mouseRepulsion: this.mouseRepulsion(mouseSettings)
+            mouseRepulsion: this.mouseRepulsion(mouseSettings),
+            wallAvoidance: this.avoidWalls(),
+            borderAvoidance: this.avoidBorders(canvasWidth, canvasHeight)
         };
 
         let acceleration = { x: 0, y: 0 };
 
-        // Apply forces directly with weights, removing the extra normalization step
+        // Apply forces directly with weights, with validation
         Object.entries(forces).forEach(([key, force]) => {
+            // Validate force before applying
+            if (!isFinite(force.x) || !isFinite(force.y)) {
+                console.warn(`Invalid force from ${key}:`, force);
+                return;
+            }
+            
             // Forces are already normalized in their respective calculation methods
             const strengthMult = key === 'mouseRepulsion' ? 1 : this.strengthMultiplier;
-            acceleration.x += force.x * weights[key] * strengthMult;
-            acceleration.y += force.y * weights[key] * strengthMult;
+            const weight = weights[key] || 0;
+            
+            const forceX = force.x * weight * strengthMult;
+            const forceY = force.y * weight * strengthMult;
+            
+            // Validate computed force
+            if (isFinite(forceX) && isFinite(forceY)) {
+                acceleration.x += forceX;
+                acceleration.y += forceY;
+            }
         });
 
         // Update velocity with acceleration
@@ -148,27 +167,30 @@ export class Boid {
             }
         }
 
+        // Validate velocity before applying
+        if (!isFinite(this.velocity.x) || !isFinite(this.velocity.y)) {
+            console.warn('Invalid velocity detected, resetting:', this.velocity);
+            this.velocity.x = Math.cos(Math.random() * Math.PI * 2) * 2;
+            this.velocity.y = Math.sin(Math.random() * Math.PI * 2) * 2;
+        }
+
         // Update position
         this.position.x += this.velocity.x;
         this.position.y += this.velocity.y;
 
-        // Edge wrapping - clear trail when wrapping
-        if (this.position.x > canvasWidth) {
-            this.position.x = 0;
-            this.trail = [];
+        // Validate position
+        if (!isFinite(this.position.x) || !isFinite(this.position.y)) {
+            console.error('Invalid position detected, resetting:', this.position);
+            // Reset to safe position
+            this.position.x = ARENA_W / 2;
+            this.position.y = ARENA_H / 2;
+            this.velocity.x = 0;
+            this.velocity.y = 0;
         }
-        if (this.position.x < 0) {
-            this.position.x = canvasWidth;
-            this.trail = [];
-        }
-        if (this.position.y > canvasHeight) {
-            this.position.y = 0;
-            this.trail = [];
-        }
-        if (this.position.y < 0) {
-            this.position.y = canvasHeight;
-            this.trail = [];
-        }
+
+        // Clamp to arena bounds (no wrapping)
+        this.position.x = Math.max(0, Math.min(ARENA_W, this.position.x));
+        this.position.y = Math.max(0, Math.min(ARENA_H, this.position.y));
     }
 
     updateTrail() {
@@ -398,14 +420,189 @@ export class Boid {
         const dy = this.position.y - mouseSettings.position.y;
         const distance = Math.sqrt(dx * dx + dy * dy);
 
-        if (distance < mouseSettings.repulsionRadius) {
-            const repulsionStrength = (mouseSettings.repulsionRadius - distance) / mouseSettings.repulsionRadius;
+        if (distance < mouseSettings.repulsionRadius && distance > 0) {
+            const strength = (mouseSettings.repulsionRadius - distance) / mouseSettings.repulsionRadius;
+            // For Swarm Commander: attract player boids, repel others
+            // This is called mouseRepulsion but can be attraction with negative force
+            const direction = this.groupIndex === 0 ? -1 : 1; // Attract player team, repel AI
             return {
-                x: (dx / distance) * this.maxForce * repulsionStrength,
-                y: (dy / distance) * this.maxForce * repulsionStrength
+                x: (dx / distance) * this.maxForce * strength * direction,
+                y: (dy / distance) * this.maxForce * strength * direction
             };
         }
 
         return { x: 0, y: 0 };
+    }
+
+    avoidWalls() {
+        const steer = { x: 0, y: 0 };
+        const detectionRadius = 100;  // Increased detection range
+        const urgentRadius = 40;      // Emergency zone
+        const insideRadius = 1;       // Definitely inside obstacle
+        
+        // Combine static walls and closed doors
+        const allObstacles = [...WALLS];
+        
+        // Add closed doors as obstacles
+        DOORS.forEach(door => {
+            if (!doorManager.isDoorOpen(door.id)) {
+                allObstacles.push(door);
+            }
+        });
+        
+        let totalForce = { x: 0, y: 0 };
+        let obstacleCount = 0;
+        
+        for (const wall of allObstacles) {
+            // Find closest point on wall to boid
+            const closestX = Math.max(wall.x, Math.min(this.position.x, wall.x + wall.w));
+            const closestY = Math.max(wall.y, Math.min(this.position.y, wall.y + wall.h));
+            
+            const dx = this.position.x - closestX;
+            const dy = this.position.y - closestY;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+            
+            // Check if boid is INSIDE the obstacle
+            const isInside = 
+                this.position.x >= wall.x && 
+                this.position.x <= wall.x + wall.w &&
+                this.position.y >= wall.y && 
+                this.position.y <= wall.y + wall.h;
+            
+            if (isInside || distance < detectionRadius) {
+                obstacleCount++;
+                
+                let force, dirX, dirY;
+                
+                if (isInside) {
+                    // INSIDE obstacle - find shortest escape route
+                    const distToLeft = this.position.x - wall.x;
+                    const distToRight = (wall.x + wall.w) - this.position.x;
+                    const distToTop = this.position.y - wall.y;
+                    const distToBottom = (wall.y + wall.h) - this.position.y;
+                    
+                    const minDist = Math.min(distToLeft, distToRight, distToTop, distToBottom);
+                    
+                    // Push toward nearest edge
+                    if (minDist === distToLeft) {
+                        dirX = -1; dirY = 0;
+                    } else if (minDist === distToRight) {
+                        dirX = 1; dirY = 0;
+                    } else if (minDist === distToTop) {
+                        dirX = 0; dirY = -1;
+                    } else {
+                        dirX = 0; dirY = 1;
+                    }
+                    
+                    // Very strong force to escape
+                    force = 10.0;
+                    
+                } else if (distance < insideRadius) {
+                    // Essentially touching - use wall normal
+                    // Calculate which face we're nearest
+                    const leftDist = Math.abs(this.position.x - wall.x);
+                    const rightDist = Math.abs(this.position.x - (wall.x + wall.w));
+                    const topDist = Math.abs(this.position.y - wall.y);
+                    const bottomDist = Math.abs(this.position.y - (wall.y + wall.h));
+                    
+                    const minEdgeDist = Math.min(leftDist, rightDist, topDist, bottomDist);
+                    
+                    if (minEdgeDist === leftDist) {
+                        dirX = -1; dirY = 0;
+                    } else if (minEdgeDist === rightDist) {
+                        dirX = 1; dirY = 0;
+                    } else if (minEdgeDist === topDist) {
+                        dirX = 0; dirY = -1;
+                    } else {
+                        dirX = 0; dirY = 1;
+                    }
+                    
+                    force = 8.0;
+                    
+                } else {
+                    // Outside but nearby - normal avoidance
+                    dirX = dx / distance;
+                    dirY = dy / distance;
+                    
+                    if (distance < urgentRadius) {
+                        // Emergency avoidance
+                        force = 6.0 * (1 - distance / urgentRadius);
+                        
+                        // Add tangential component to slide along walls
+                        const tangentX = -dirY;
+                        const tangentY = dirX;
+                        const tangentForce = force * 0.4;
+                        
+                        totalForce.x += tangentX * tangentForce;
+                        totalForce.y += tangentY * tangentForce;
+                        
+                    } else {
+                        // Normal avoidance
+                        force = 3.0 * (1 - distance / detectionRadius);
+                    }
+                }
+                
+                // Add repulsion force
+                totalForce.x += dirX * force;
+                totalForce.y += dirY * force;
+            }
+        }
+        
+        // Average forces if multiple obstacles
+        if (obstacleCount > 0) {
+            steer.x = totalForce.x / obstacleCount;
+            steer.y = totalForce.y / obstacleCount;
+        }
+        
+        // Normalize and scale
+        const magnitude = Math.hypot(steer.x, steer.y);
+        if (magnitude > 0) {
+            const scale = Math.min(magnitude, this.maxForce * 5) / magnitude;
+            steer.x = steer.x * scale;
+            steer.y = steer.y * scale;
+        }
+        
+        return steer;
+    }
+
+    avoidBorders(arenaW, arenaH) {
+        const steer = { x: 0, y: 0 };
+        const margin = 60;
+        const urgentMargin = 20;
+        
+        let forceMultiplier = 1;
+        
+        // Left border
+        if (this.position.x < margin) {
+            const dist = this.position.x;
+            forceMultiplier = dist < urgentMargin ? 3 : 1;
+            steer.x += ((margin - this.position.x) / margin) * forceMultiplier;
+        }
+        // Right border
+        if (this.position.x > arenaW - margin) {
+            const dist = arenaW - this.position.x;
+            forceMultiplier = dist < urgentMargin ? 3 : 1;
+            steer.x -= ((this.position.x - (arenaW - margin)) / margin) * forceMultiplier;
+        }
+        // Top border
+        if (this.position.y < margin) {
+            const dist = this.position.y;
+            forceMultiplier = dist < urgentMargin ? 3 : 1;
+            steer.y += ((margin - this.position.y) / margin) * forceMultiplier;
+        }
+        // Bottom border
+        if (this.position.y > arenaH - margin) {
+            const dist = arenaH - this.position.y;
+            forceMultiplier = dist < urgentMargin ? 3 : 1;
+            steer.y -= ((this.position.y - (arenaH - margin)) / margin) * forceMultiplier;
+        }
+        
+        const magnitude = Math.hypot(steer.x, steer.y);
+        if (magnitude > 0) {
+            steer.x = (steer.x / magnitude) * this.maxForce * 3;
+            steer.y = (steer.y / magnitude) * this.maxForce * 3;
+        }
+        
+        return steer;
     }
 }

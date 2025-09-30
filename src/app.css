@@ -1,70 +1,36 @@
-:root {
-  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; /* More modern, but still fits */
-  line-height: 1.5;
-  font-weight: 400;
-
-  color-scheme: dark; /* Force dark mode */
-  color: #f0f; /* Bright magenta */
-  background-color: #1a0f1a; /* Dark purple */
-
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
 }
 
-a {
-  font-weight: 500;
-  color: #0ff; /* Bright cyan */
-  text-decoration: none; /* Remove underline */
-}
-a:hover {
-  color: #0dd; /* Slightly darker cyan */
-  text-decoration: underline;
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  position: fixed;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  font-family: monospace, 'Courier New', Courier;
 }
 
 body {
-  margin: 0;
-  display: flex;
-  place-items: center;
-  min-width: 320px;
-  min-height: 100vh;
-  background: linear-gradient(135deg, #1a0f1a 0%, #0d081f 100%); /* Subtle gradient */
-}
-
-h1 {
-  font-size: 3.2em;
-  line-height: 1.1;
-}
-
-.card {
-  padding: 2em;
+  background: #000;
 }
 
 #app {
-  max-width: 1280px;
-  margin: 0 auto;
-  padding: 2rem;
-  text-align: center;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
 }
 
 button {
-  border-radius: 8px;
-  border: 1px solid #f0f; /* Magenta border */
-  padding: 0.6em 1.2em;
-  font-size: 1em;
-  font-weight: 500;
-  font-family: inherit;
-  background-color: rgba(255, 0, 255, 0.2); /* Semi-transparent magenta */
-  cursor: pointer;
-  transition: all 0.25s;
-  box-shadow: 0 0 10px #f0f; /* Magenta glow */
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
 }
-button:hover {
-  box-shadow: 0 0 20px #f0f; /* Brighter glow on hover */
-  background-color: rgba(255, 0, 255, 0.4);
-}
-button:focus,
-button:focus-visible {
-   outline: none;
+
+input[type="range"] {
+  touch-action: manipulation;
 }
