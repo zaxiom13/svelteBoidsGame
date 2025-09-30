@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Debug - Swarm Commander</title>
+    <style>
+        body { 
+            font-family: monospace; 
+            padding: 20px; 
+            background: #000; 
+            color: #0f0; 
+            font-size: 14px;
+            line-height: 1.6;
+        }
+        .error { color: #f00; font-weight: bold; }
+        .success { color: #0f0; }
+        .warning { color: #ff0; }
+        .info { color: #0ff; }
+        pre { 
+            background: #111; 
+            padding: 10px; 
+            border: 1px solid #333; 
+            overflow-x: auto;
+        }
+        h2 { color: #0ff; margin-top: 20px; }
+        #canvas-test { border: 1px solid #0f0; }
+    </style>
+</head>
+<body>
+    <h1>🔧 Swarm Commander - Debug Console</h1>
+    <div id="output"></div>
+    
+    <h2>Canvas Test</h2>
+    <canvas id="canvas-test" width="400" height="300"></canvas>
+    
+    <script type="module">
+        const output = document.getElementById('output');
+        const testCanvas = document.getElementById('canvas-test');
+        const testCtx = testCanvas.getContext('2d');
+        
+        function log(msg, type = 'info') {
+            const div = document.createElement('div');
+            div.className = type;
+            div.innerHTML = msg;
+            output.appendChild(div);
+            console.log(`[${type}]`, msg);
+        }
+        
+        async function runTests() {
+            try {
+                log('<h2>📦 Step 1: Loading Constants</h2>');
+                const constants = await import('/src/lib/constants.js');
+                const { ARENA_W, ARENA_H, WALLS, DOORS, SECTOR_W, SECTOR_H, SECTOR_COLS, SECTOR_ROWS, doorManager } = constants;
+                
+                log(`✓ Arena: ${ARENA_W}×${ARENA_H}`, 'success');
+                log(`✓ Sectors: ${SECTOR_COLS}×${SECTOR_ROWS} (${SECTOR_W}×${SECTOR_H} each)`, 'success');
+                log(`✓ Walls: ${WALLS.length}`, 'success');
+                log(`✓ Doors: ${DOORS.length}`, 'success');
+                
+                if (WALLS.length !== 48) {
+                    log(`⚠ Expected 48 walls, got ${WALLS.length}`, 'warning');
+                }
+                if (DOORS.length !== 24) {
+                    log(`⚠ Expected 24 doors, got ${DOORS.length}`, 'warning');
+                }
+                
+                // Test drawing walls
+                log('<h2>🎨 Step 2: Testing Wall Rendering</h2>');
+                testCtx.fillStyle = '#000';
+                testCtx.fillRect(0, 0, 400, 300);
+                
+                const scale = 400 / ARENA_W;
+                testCtx.fillStyle = '#555';
+                WALLS.forEach(w => {
+                    testCtx.fillRect(w.x * scale, w.y * scale, w.w * scale, w.h * scale);
+                });
+                
+                testCtx.strokeStyle = '#0f0';
+                DOORS.forEach(d => {
+                    testCtx.strokeRect(d.x * scale, d.y * scale, d.w * scale, d.h * scale);
+                });
+                
+                log('✓ Walls rendered in canvas above', 'success');
+                
+                log('<h2>🐛 Step 3: Loading Boid Class</h2>');
+                const { Boid } = await import('/src/lib/Boid.js');
+                log('✓ Boid class loaded', 'success');
+                
+                log('<h2>🧪 Step 4: Creating Test Boid</h2>');
+                const testBoid = new Boid(400, 400, 2, 2, 0, ['#00FFFF', '#FF1493']);
+                log(`✓ Boid created at (${testBoid.position.x}, ${testBoid.position.y})`, 'success');
+                log(`✓ Velocity: (${testBoid.velocity.x.toFixed(2)}, ${testBoid.velocity.y.toFixed(2)})`, 'success');
+                
+                log('<h2>🧲 Step 5: Testing Wall Avoidance</h2>');
+                const force = testBoid.avoidWalls();
+                log(`✓ Force computed: (${force.x.toFixed(2)}, ${force.y.toFixed(2)})`, 'success');
+                
+                if (!isFinite(force.x) || !isFinite(force.y)) {
+                    log('✗ Force is invalid (NaN or Infinity)!', 'error');
+                } else {
+                    log('✓ Force is valid', 'success');
+                }
+                
+                log('<h2>📊 Step 6: Loading Stores</h2>');
+                const { boids, BOID_COLORS } = await import('/src/lib/boidsStore.js');
+                log('✓ Stores loaded', 'success');
+                
+                log('<h2>🎮 Step 7: Subscribing to Boid Store</h2>');
+                let boidCount = 0;
+                const unsubscribe = boids.subscribe(value => {
+                    if (value && value.boids) {
+                        boidCount = value.boids.length;
+                        log(`✓ Store has ${boidCount} boids`, 'success');
+                        
+                        if (boidCount > 0) {
+                            const first = value.boids[0];
+                            log(`  First boid at (${first.position.x.toFixed(0)}, ${first.position.y.toFixed(0)})`, 'info');
+                            
+                            // Check if any boids have invalid positions
+                            const invalidBoids = value.boids.filter(b => 
+                                !isFinite(b.position.x) || !isFinite(b.position.y) ||
+                                !isFinite(b.velocity.x) || !isFinite(b.velocity.y)
+                            );
+                            
+                            if (invalidBoids.length > 0) {
+                                log(`✗ Found ${invalidBoids.length} boids with invalid positions!`, 'error');
+                            } else {
+                                log(`✓ All boids have valid positions`, 'success');
+                            }
+                            
+                            // Check if boids are in bounds
+                            const outOfBounds = value.boids.filter(b =>
+                                b.position.x < 0 || b.position.x > ARENA_W ||
+                                b.position.y < 0 || b.position.y > ARENA_H
+                            );
+                            
+                            if (outOfBounds.length > 0) {
+                                log(`⚠ ${outOfBounds.length} boids are out of bounds`, 'warning');
+                            } else {
+                                log(`✓ All boids are within arena bounds`, 'success');
+                            }
+                        }
+                    }
+                });
+                
+                // Wait a bit for store to initialize
+                await new Promise(resolve => setTimeout(resolve, 100));
+                
+                log('<h2>🖼️ Step 8: Loading App Component</h2>');
+                try {
+                    const App = await import('/src/App.svelte');
+                    log('✓ App component loaded successfully', 'success');
+                } catch (err) {
+                    log(`✗ Failed to load App: ${err.message}`, 'error');
+                    log(`<pre>${err.stack}</pre>`, 'error');
+                    throw err;
+                }
+                
+                log('<h2>✅ ALL TESTS PASSED</h2>', 'success');
+                log('The game should be rendering. If you see a black screen, check:', 'info');
+                log('1. Browser console (F12) for errors', 'info');
+                log('2. Canvas element exists in DOM', 'info');
+                log('3. Canvas has correct dimensions', 'info');
+                log('4. Update loop is running', 'info');
+                
+            } catch (err) {
+                log(`<h2>❌ TEST FAILED</h2>`, 'error');
+                log(`Error: ${err.message}`, 'error');
+                log(`<pre>${err.stack}</pre>`, 'error');
+            }
+        }
+        
+        // Run tests
+        runTests();
+    </script>
+</body>
+</html>

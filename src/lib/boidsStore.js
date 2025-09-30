@@ -1,7 +1,7 @@
 import { writable, get } from 'svelte/store';
 import { Boid } from './Boid.js';
 import { gameState } from './gameStore';
-import { BOID_COLORS, TEAM, ARENA_W, ARENA_H, WALLS, DOORS, SECTOR_W, SECTOR_H } from './constants';
+import { BOID_COLORS, TEAM, ARENA_W, ARENA_H, WALLS, DOORS, SECTOR_W, SECTOR_H, SECTOR_COLS, SECTOR_ROWS } from './constants';
 import { Quadtree } from './Quadtree.js';
 
 export { BOID_COLORS };  // Re-export for backward compatibility
@@ -155,7 +155,7 @@ function createBoidsAndQuadtree(numBoids, canvasWidth, canvasHeight, groupCount)
 
 export const boids = writable(createBoidsAndQuadtree(get(numBoids), ARENA_W, ARENA_H, get(numGroups)));
 
-export function resetBoids(count, canvasWidth, canvasHeight, groupCount) {
+export function resetBoids(count, groupCount) {
     // Only reset game state when manually resetting boids during a running game
     const currentGameState = get(gameState);
     if (currentGameState.status === 'running' || currentGameState.status === 'countdown') {
@@ -172,14 +172,8 @@ export function resetBoids(count, canvasWidth, canvasHeight, groupCount) {
         });
     }
 
-    // Validate dimensions
-    // if (!canvasWidth || !canvasHeight) {
-    //     console.warn('Invalid canvas dimensions, using defaults');
-    //     canvasWidth = window.innerWidth * 0.8;
-    //     canvasHeight = window.innerHeight * 0.8;
-    // }
-
-    const boidsData = createBoidsAndQuadtree(count, canvasWidth, canvasHeight, groupCount);
+    // Use ARENA dimensions (not canvas dimensions)
+    const boidsData = createBoidsAndQuadtree(count, ARENA_W, ARENA_H, groupCount);
     boids.set(boidsData);
 }
 
@@ -232,5 +226,5 @@ export function randomizeConfiguration() {
         loyaltyFactor: Math.random()
     }));
     
-    resetBoids(get(numBoids), 800, 600, get(numGroups));
+    resetBoids(get(numBoids), get(numGroups));
 }

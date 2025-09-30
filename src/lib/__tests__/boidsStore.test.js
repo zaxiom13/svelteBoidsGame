@@ -19,8 +19,8 @@ import {
 
 describe('Boids Store State Presence', () => {
     beforeEach(() => {
-        // Reset to initial state
-        resetBoids(50, 800, 600, 4);
+        // Reset to initial state (updated signature)
+        resetBoids(50, 2); // count, groupCount
     });
 
     describe('Store Existence', () => {
@@ -128,7 +128,7 @@ describe('Boids Store State Presence', () => {
 
     describe('Color Constants', () => {
         it('should have correct number of colors defined', () => {
-            expect(BOID_COLORS).toHaveLength(8);
+            expect(BOID_COLORS).toHaveLength(2); // Now only 2 teams
             BOID_COLORS.forEach(color => {
                 expect(color).toMatch(/^#[0-9A-F]{6}$/i);
             });
