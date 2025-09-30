@@ -30,12 +30,12 @@ export const numBoids = writable(240); // 120 per team
 export const numGroups = writable(2); // Always 2 teams now
 
 export const visualSettings = writable({
-    boidSize: 10,
-    trailLength: 20,
-    trailWidth: 2,
-    trailOpacity: 0.25,
-    neighborRadius: 30, // Maximized neighbor radius for more influence
-    separationRadius: 25
+    boidSize: 4,  // Much smaller - was 10
+    trailLength: 8,
+    trailWidth: 1,
+    trailOpacity: 0.15,
+    neighborRadius: 30,
+    separationRadius: 20
 });
 
 export const groupSettings = writable({

@@ -32,10 +32,15 @@ A tactical boids-based strategy game inspired by Ender's Game, where you command
 
 ### Game Features
 
-#### Large Arena with Sectors
-- 3200×2200 world divided into 4×4 sectors (A1-D4)
-- Silo/prison layout with walls and tunnels
-- Boids avoid walls and borders naturally
+#### Vertical Arena with Sliding Doors
+- **1600×3200 portrait orientation** (mobile-optimized)
+- **2×4 sector grid** (A1-B1, A2-B2, A3-B3, A4-B4)
+- **Silo/prison layout** with solid walls between sectors
+- **Sliding doors** open/close periodically (5s cycles)
+  - Even doors open first half of cycle
+  - Odd doors open second half
+  - Creates dynamic tactical flow
+- Boids avoid walls and closed doors naturally
 
 #### Camera System
 - Smooth zoom: from full-map overview to single-sector detail

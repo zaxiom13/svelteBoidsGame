@@ -7,9 +7,9 @@
   } from './lib/boidsStore';
   import { gameState, startGame, endGame } from './lib/gameStore';
   import { 
-    TEAM, COLOR_NAMES, ARENA_W, ARENA_H, WALLS, SECTOR_W, SECTOR_H, 
-    SECTOR_LABELS, SECTOR_COLS, SECTOR_ROWS, START_MORALE, 
-    MORALE_RECOVERY_RATE, MORALE_DECAY_PER_POWERUP, POWERUP_TYPES
+    TEAM, COLOR_NAMES, ARENA_W, ARENA_H, WALLS, DOORS, doorManager,
+    SECTOR_W, SECTOR_H, SECTOR_LABELS, SECTOR_COLS, SECTOR_ROWS, 
+    START_MORALE, MORALE_RECOVERY_RATE, MORALE_DECAY_PER_POWERUP, POWERUP_TYPES
   } from './lib/constants';
 
   let canvas, ctx;
@@ -17,10 +17,10 @@
   let canvasHeight = window.innerHeight;
   let isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
   
-  // Camera state
-  let camera = { x: ARENA_W / 2, y: ARENA_H / 2, zoom: 0.35, targetZoom: 0.35 };
-  const minZoom = 0.15;
-  const maxZoom = 1.2;
+  // Camera state - adjusted for vertical layout
+  let camera = { x: ARENA_W / 2, y: ARENA_H / 2, zoom: 0.45, targetZoom: 0.45 };
+  const minZoom = 0.25;  // Can see full vertical map
+  const maxZoom = 1.5;   // Can zoom in closer
   
   // Touch state
   let touches = [];
@@ -389,8 +389,34 @@
       ctx.stroke();
     }
     
+    // Draw static walls
     ctx.fillStyle = '#555';
     WALLS.forEach(w => ctx.fillRect(w.x, w.y, w.w, w.h));
+    
+    // Draw doors (with animation)
+    DOORS.forEach(door => {
+      const openAmount = doorManager.getDoorOpenAmount(door.id);
+      
+      if (openAmount < 1) {
+        // Door is closed or closing
+        ctx.fillStyle = openAmount < 0.1 ? '#444' : `rgba(68, 68, 68, ${1 - openAmount * 0.7})`;
+        
+        if (door.orientation === 'horizontal') {
+          // Horizontal door - slides up/down
+          const slideOffset = door.h * openAmount;
+          ctx.fillRect(door.x, door.y + slideOffset, door.w, door.h * (1 - openAmount));
+        } else {
+          // Vertical door - slides left/right
+          const slideOffset = door.w * openAmount;
+          ctx.fillRect(door.x + slideOffset, door.y, door.w * (1 - openAmount), door.h);
+        }
+      }
+      
+      // Draw door frame/outline
+      ctx.strokeStyle = openAmount > 0.5 ? '#0F0' : '#666';
+      ctx.lineWidth = 2 / camera.zoom;
+      ctx.strokeRect(door.x, door.y, door.w, door.h);
+    });
     
     // Update boids
     if (!isPaused && $gameState.status === 'running') {
@@ -493,7 +519,7 @@
       }
     });
     
-    // Draw boids
+    // Draw boids (smaller, simpler)
     $boids.boids.forEach(boid => {
       const angle = Math.atan2(boid.velocity.y, boid.velocity.x);
       const size = $visualSettings.boidSize / camera.zoom;
@@ -501,13 +527,23 @@
       ctx.save();
       ctx.translate(boid.position.x, boid.position.y);
       ctx.rotate(angle);
+      
+      // Simple triangle shape
       ctx.beginPath();
-      ctx.moveTo(size * 1.2, 0);
-      ctx.lineTo(-size * 0.6, -size * 0.5);
-      ctx.lineTo(-size * 0.6, size * 0.5);
+      ctx.moveTo(size * 2, 0);
+      ctx.lineTo(-size, -size);
+      ctx.lineTo(-size, size);
       ctx.closePath();
       ctx.fillStyle = boid.color;
       ctx.fill();
+      
+      // Optional: tiny glow for visibility
+      if (camera.zoom > 0.8) {
+        ctx.strokeStyle = boid.color;
+        ctx.lineWidth = 0.5 / camera.zoom;
+        ctx.stroke();
+      }
+      
       ctx.restore();
     });
     

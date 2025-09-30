@@ -11,13 +11,13 @@ export const COLOR_NAMES = {
     '#FF1493': 'AI Swarm'
 };
 
-// Arena configuration - larger map with sectors
-export const ARENA_W = 3200;
-export const ARENA_H = 2200;
+// Arena configuration - VERTICAL orientation (portrait)
+export const ARENA_W = 1600;  // Narrower width
+export const ARENA_H = 3200;  // Taller height
 export const SECTOR_W = 800;
-export const SECTOR_H = 550;
-export const SECTOR_COLS = 4;
-export const SECTOR_ROWS = 4;
+export const SECTOR_H = 800;  // Square sectors
+export const SECTOR_COLS = 2;  // 2 columns
+export const SECTOR_ROWS = 4;  // 4 rows (vertical)
 
 // Generate sector labels (A1, A2, B1, B2, etc.)
 export const SECTOR_LABELS = [];
@@ -28,80 +28,158 @@ for (let row = 0; row < SECTOR_ROWS; row++) {
     }
 }
 
-// Wall configuration - create silo/prison layout with tunnels
+// Wall configuration - create silo/prison layout with SLIDING DOORS
 export const WALL_THICKNESS = 40;
-export const TUNNEL_WIDTH = 180;
+export const DOOR_WIDTH = 200;  // Width of the door opening
+export const DOOR_CYCLE_MS = 5000;  // 5 seconds per cycle
+export const DOOR_OPEN_DURATION = 2500;  // Door stays open for 2.5s
 
-// Generate walls for silo grid
-export function generateWalls() {
-    const walls = [];
+// Door state management
+export class DoorManager {
+    constructor() {
+        this.doors = [];
+        this.startTime = Date.now();
+    }
     
-    // Vertical walls (with tunnels)
-    for (let col = 1; col < SECTOR_COLS; col++) {
-        const x = col * SECTOR_W - WALL_THICKNESS / 2;
-        // Create wall segments with tunnels
-        for (let row = 0; row < SECTOR_ROWS; row++) {
-            const y = row * SECTOR_H;
-            const tunnelY = y + SECTOR_H / 2 - TUNNEL_WIDTH / 2;
-            
-            // Wall segment above tunnel
-            if (tunnelY > y) {
-                walls.push({
-                    x: x,
-                    y: y,
-                    w: WALL_THICKNESS,
-                    h: tunnelY - y
-                });
-            }
-            
-            // Wall segment below tunnel
-            const belowY = tunnelY + TUNNEL_WIDTH;
-            if (belowY < y + SECTOR_H) {
-                walls.push({
-                    x: x,
-                    y: belowY,
-                    w: WALL_THICKNESS,
-                    h: y + SECTOR_H - belowY
-                });
-            }
+    // Check if a door is currently open
+    isDoorOpen(doorId) {
+        const elapsed = (Date.now() - this.startTime) % DOOR_CYCLE_MS;
+        // Doors alternate: even doors open first half, odd doors open second half
+        const isEvenCycle = elapsed < DOOR_CYCLE_MS / 2;
+        const cycleProgress = elapsed % (DOOR_CYCLE_MS / 2);
+        const isOpenPhase = cycleProgress < DOOR_OPEN_DURATION;
+        
+        const isEvenDoor = doorId % 2 === 0;
+        return isEvenDoor ? (isEvenCycle && isOpenPhase) : (!isEvenCycle && isOpenPhase);
+    }
+    
+    // Get door open percentage (0 = closed, 1 = fully open) for animation
+    getDoorOpenAmount(doorId) {
+        const elapsed = (Date.now() - this.startTime) % DOOR_CYCLE_MS;
+        const isEvenCycle = elapsed < DOOR_CYCLE_MS / 2;
+        const cycleProgress = elapsed % (DOOR_CYCLE_MS / 2);
+        
+        const isEvenDoor = doorId % 2 === 0;
+        const shouldBeOpen = isEvenDoor ? isEvenCycle : !isEvenCycle;
+        
+        if (!shouldBeOpen) return 0;
+        
+        const openDuration = DOOR_OPEN_DURATION;
+        const transitionTime = 300; // 300ms to open/close
+        
+        if (cycleProgress < transitionTime) {
+            // Opening
+            return cycleProgress / transitionTime;
+        } else if (cycleProgress < openDuration - transitionTime) {
+            // Fully open
+            return 1;
+        } else if (cycleProgress < openDuration) {
+            // Closing
+            return 1 - (cycleProgress - (openDuration - transitionTime)) / transitionTime;
+        }
+        
+        return 0;
+    }
+}
+
+// Generate walls with door positions
+export function generateWalls() {
+    const staticWalls = [];
+    const doors = [];
+    let doorId = 0;
+    
+    // Vertical wall (center divider between columns)
+    const centerX = SECTOR_W - WALL_THICKNESS / 2;
+    for (let row = 0; row < SECTOR_ROWS; row++) {
+        const y = row * SECTOR_H;
+        const doorY = y + SECTOR_H / 2 - DOOR_WIDTH / 2;
+        
+        // Wall segment above door
+        if (doorY > y) {
+            staticWalls.push({
+                x: centerX,
+                y: y,
+                w: WALL_THICKNESS,
+                h: doorY - y,
+                isStatic: true
+            });
+        }
+        
+        // Door position (dynamic)
+        doors.push({
+            id: doorId++,
+            x: centerX,
+            y: doorY,
+            w: WALL_THICKNESS,
+            h: DOOR_WIDTH,
+            orientation: 'vertical',
+            isStatic: false
+        });
+        
+        // Wall segment below door
+        const belowY = doorY + DOOR_WIDTH;
+        if (belowY < y + SECTOR_H) {
+            staticWalls.push({
+                x: centerX,
+                y: belowY,
+                w: WALL_THICKNESS,
+                h: y + SECTOR_H - belowY,
+                isStatic: true
+            });
         }
     }
     
-    // Horizontal walls (with tunnels)
+    // Horizontal walls (between rows) - all have doors
     for (let row = 1; row < SECTOR_ROWS; row++) {
         const y = row * SECTOR_H - WALL_THICKNESS / 2;
-        // Create wall segments with tunnels
+        
         for (let col = 0; col < SECTOR_COLS; col++) {
             const x = col * SECTOR_W;
-            const tunnelX = x + SECTOR_W / 2 - TUNNEL_WIDTH / 2;
+            const doorX = x + SECTOR_W / 2 - DOOR_WIDTH / 2;
             
-            // Wall segment left of tunnel
-            if (tunnelX > x) {
-                walls.push({
+            // Wall segment left of door
+            if (doorX > x) {
+                staticWalls.push({
                     x: x,
                     y: y,
-                    w: tunnelX - x,
-                    h: WALL_THICKNESS
+                    w: doorX - x,
+                    h: WALL_THICKNESS,
+                    isStatic: true
                 });
             }
             
-            // Wall segment right of tunnel
-            const rightX = tunnelX + TUNNEL_WIDTH;
+            // Door position (dynamic)
+            doors.push({
+                id: doorId++,
+                x: doorX,
+                y: y,
+                w: DOOR_WIDTH,
+                h: WALL_THICKNESS,
+                orientation: 'horizontal',
+                isStatic: false
+            });
+            
+            // Wall segment right of door
+            const rightX = doorX + DOOR_WIDTH;
             if (rightX < x + SECTOR_W) {
-                walls.push({
+                staticWalls.push({
                     x: rightX,
                     y: y,
                     w: x + SECTOR_W - rightX,
-                    h: WALL_THICKNESS
+                    h: WALL_THICKNESS,
+                    isStatic: true
                 });
             }
         }
     }
     
-    return walls;
+    return { staticWalls, doors };
 }
 
-export const WALLS = generateWalls();
+const wallData = generateWalls();
+export const WALLS = wallData.staticWalls;
+export const DOORS = wallData.doors;
+export const doorManager = new DoorManager();
 
 // Morale system constants
 export const START_MORALE = 0.75;

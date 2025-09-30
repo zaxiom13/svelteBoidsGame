@@ -1,4 +1,4 @@
-import { WALLS, ARENA_W, ARENA_H } from './constants';
+import { WALLS, DOORS, doorManager, ARENA_W, ARENA_H } from './constants';
 
 export class Boid {
     constructor(x, y, vx, vy, groupIndex, colors) {
@@ -405,9 +405,23 @@ export class Boid {
 
     avoidWalls() {
         const steer = { x: 0, y: 0 };
-        const detectionRadius = 50;
+        const detectionRadius = 80;  // Increased from 50
+        const urgentRadius = 30;     // Very close - emergency avoidance
         
-        for (const wall of WALLS) {
+        // Combine static walls and closed doors
+        const allObstacles = [...WALLS];
+        
+        // Add closed doors as obstacles
+        DOORS.forEach(door => {
+            if (!doorManager.isDoorOpen(door.id)) {
+                allObstacles.push(door);
+            }
+        });
+        
+        let closestDist = Infinity;
+        let closestObstacle = null;
+        
+        for (const wall of allObstacles) {
             // Find closest point on wall to boid
             const closestX = Math.max(wall.x, Math.min(this.position.x, wall.x + wall.w));
             const closestY = Math.max(wall.y, Math.min(this.position.y, wall.y + wall.h));
@@ -416,17 +430,50 @@ export class Boid {
             const dy = this.position.y - closestY;
             const distance = Math.sqrt(dx * dx + dy * dy);
             
-            if (distance < detectionRadius && distance > 0) {
-                const force = (1 - distance / detectionRadius) * 2;
-                steer.x += (dx / distance) * force;
-                steer.y += (dy / distance) * force;
+            if (distance < closestDist) {
+                closestDist = distance;
+                closestObstacle = { x: closestX, y: closestY, dx, dy, distance };
             }
         }
         
+        // If we found a nearby obstacle
+        if (closestObstacle && closestObstacle.distance < detectionRadius) {
+            const { dx, dy, distance } = closestObstacle;
+            
+            if (distance < 1) return steer; // Too close to compute, skip
+            
+            // Stronger force when very close
+            let force;
+            if (distance < urgentRadius) {
+                // Emergency avoidance - very strong
+                force = 5.0 * (1 - distance / urgentRadius);
+            } else {
+                // Normal avoidance
+                force = 2.0 * (1 - distance / detectionRadius);
+            }
+            
+            // Push away from obstacle
+            steer.x = (dx / distance) * force;
+            steer.y = (dy / distance) * force;
+            
+            // Add tangential component to prevent corner-sticking
+            // Rotate 90 degrees to get tangent direction
+            const tangentX = -dy / distance;
+            const tangentY = dx / distance;
+            
+            // Bias toward tangent when very close to prevent getting stuck
+            if (distance < urgentRadius) {
+                const tangentForce = force * 0.5;
+                steer.x += tangentX * tangentForce;
+                steer.y += tangentY * tangentForce;
+            }
+        }
+        
+        // Normalize and scale
         const magnitude = Math.hypot(steer.x, steer.y);
         if (magnitude > 0) {
-            steer.x = (steer.x / magnitude) * this.maxForce * 3; // Strong avoidance
-            steer.y = (steer.y / magnitude) * this.maxForce * 3;
+            steer.x = (steer.x / magnitude) * this.maxForce * 4;
+            steer.y = (steer.y / magnitude) * this.maxForce * 4;
         }
         
         return steer;
@@ -434,29 +481,40 @@ export class Boid {
 
     avoidBorders(arenaW, arenaH) {
         const steer = { x: 0, y: 0 };
-        const margin = 50;
+        const margin = 60;
+        const urgentMargin = 20;
+        
+        let forceMultiplier = 1;
         
         // Left border
         if (this.position.x < margin) {
-            steer.x += (margin - this.position.x) / margin;
+            const dist = this.position.x;
+            forceMultiplier = dist < urgentMargin ? 3 : 1;
+            steer.x += ((margin - this.position.x) / margin) * forceMultiplier;
         }
         // Right border
         if (this.position.x > arenaW - margin) {
-            steer.x -= (this.position.x - (arenaW - margin)) / margin;
+            const dist = arenaW - this.position.x;
+            forceMultiplier = dist < urgentMargin ? 3 : 1;
+            steer.x -= ((this.position.x - (arenaW - margin)) / margin) * forceMultiplier;
         }
         // Top border
         if (this.position.y < margin) {
-            steer.y += (margin - this.position.y) / margin;
+            const dist = this.position.y;
+            forceMultiplier = dist < urgentMargin ? 3 : 1;
+            steer.y += ((margin - this.position.y) / margin) * forceMultiplier;
         }
         // Bottom border
         if (this.position.y > arenaH - margin) {
-            steer.y -= (this.position.y - (arenaH - margin)) / margin;
+            const dist = arenaH - this.position.y;
+            forceMultiplier = dist < urgentMargin ? 3 : 1;
+            steer.y -= ((this.position.y - (arenaH - margin)) / margin) * forceMultiplier;
         }
         
         const magnitude = Math.hypot(steer.x, steer.y);
         if (magnitude > 0) {
-            steer.x = (steer.x / magnitude) * this.maxForce * 2;
-            steer.y = (steer.y / magnitude) * this.maxForce * 2;
+            steer.x = (steer.x / magnitude) * this.maxForce * 3;
+            steer.y = (steer.y / magnitude) * this.maxForce * 3;
         }
         
         return steer;
