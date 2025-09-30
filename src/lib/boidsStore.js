@@ -1,17 +1,24 @@
 import { writable, get } from 'svelte/store';
 import { Boid } from './Boid.js';
 import { gameState } from './gameStore';
-import { BOID_COLORS } from './constants';
+import { BOID_COLORS, TEAM, ARENA_W, ARENA_H, WALLS } from './constants';
 import { Quadtree } from './Quadtree.js';
 
 export { BOID_COLORS };  // Re-export for backward compatibility
+
+// Doctrine settings - can be adjusted in pause screen
+export const doctrine = writable({
+    cohesion: 0.6,    // 0-1 scale
+    separation: 0.6,  // 0-1 scale
+    bravery: 0.5      // 0-1 scale (affects defection resistance)
+});
 
 export const weights = writable({
     separation: 2.0,
     alignment: 1.5,
     cohesion: 1.2,
-    groupRepulsion: 0, // Set to zero as requested
-    mouseRepulsion: 1.0
+    groupRepulsion: 0.3,
+    mouseRepulsion: 1.5
 });
 
 export const speeds = writable({
@@ -19,8 +26,8 @@ export const speeds = writable({
     max: 4
 });
 
-export const numBoids = writable(150); // Set to 150 as requested
-export const numGroups = writable(4);
+export const numBoids = writable(240); // 120 per team
+export const numGroups = writable(2); // Always 2 teams now
 
 export const visualSettings = writable({
     boidSize: 10,
@@ -52,25 +59,59 @@ export const mouseSettings = writable({
     active: true
 });
 
+// Helper to check if position is inside any wall
+function isInsideWall(x, y) {
+    return WALLS.some(wall =>
+        x >= wall.x && x <= wall.x + wall.w &&
+        y >= wall.y && y <= wall.y + wall.h
+    );
+}
+
+// Helper to find empty spawn position
+function findEmptySpot(arenaW, arenaH, attempts = 50) {
+    for (let i = 0; i < attempts; i++) {
+        const x = Math.random() * (arenaW - 40) + 20;
+        const y = Math.random() * (arenaH - 40) + 20;
+        if (!isInsideWall(x, y)) {
+            return { x, y };
+        }
+    }
+    // Fallback: return a safe position
+    return { x: arenaW / 4, y: arenaH / 4 };
+}
+
 function createBoids(numBoids, canvasWidth, canvasHeight, groupCount) {
     const boids = [];
+    const boidsPerTeam = Math.floor(numBoids / 2);
+    
     for (let i = 0; i < numBoids; i++) {
-        // Fix boid positioning to properly use full canvas height
-        const x = Math.random() * (canvasWidth - 20) + 10; // Keep boids 10px from edges
-        const y = Math.random() * (canvasHeight - 20) + 10;
-        const speed = 2 + Math.random() * 2; // Random speed between 2 and 4
+        const groupIndex = i < boidsPerTeam ? TEAM.PLAYER : TEAM.AI;
+        
+        // Spawn in different sides: Player on left, AI on right
+        let pos;
+        if (groupIndex === TEAM.PLAYER) {
+            // Spawn player boids in left half
+            pos = findEmptySpot(ARENA_W / 2, ARENA_H);
+        } else {
+            // Spawn AI boids in right half
+            const rightPos = findEmptySpot(ARENA_W / 2, ARENA_H);
+            pos = { x: rightPos.x + ARENA_W / 2, y: rightPos.y };
+        }
+        
+        const speed = 2 + Math.random() * 2;
         const angle = Math.random() * Math.PI * 2;
         const vx = Math.cos(angle) * speed;
         const vy = Math.sin(angle) * speed;
-        const groupIndex = i % groupCount;
-        boids.push(new Boid(x, y, vx, vy, groupIndex, BOID_COLORS));
+        
+        boids.push(new Boid(pos.x, pos.y, vx, vy, groupIndex, BOID_COLORS));
     }
     return boids;
 }
 
 function createBoidsAndQuadtree(numBoids, canvasWidth, canvasHeight, groupCount) {
     const boids = createBoids(numBoids, canvasWidth, canvasHeight, groupCount);
-    const quadtree = new Quadtree({ x: 0, y: 0, width: canvasWidth, height: canvasHeight }, 32);
+    // Use full arena dimensions for quadtree
+    const quadtree = new Quadtree({ x: 0, y: 0, width: ARENA_W, height: ARENA_H }, 32);
     
     // Force a full rebuild of the quadtree
     quadtree.clear();
@@ -81,7 +122,7 @@ function createBoidsAndQuadtree(numBoids, canvasWidth, canvasHeight, groupCount)
     return { boids, quadtree };
 }
 
-export const boids = writable(createBoidsAndQuadtree(get(numBoids), 800, 600, get(numGroups)));
+export const boids = writable(createBoidsAndQuadtree(get(numBoids), ARENA_W, ARENA_H, get(numGroups)));
 
 export function resetBoids(count, canvasWidth, canvasHeight, groupCount) {
     // Only reset game state when manually resetting boids during a running game

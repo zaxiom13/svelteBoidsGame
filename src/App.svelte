@@ -1,514 +1,518 @@
 <script>
   import { onMount } from 'svelte';
   import { get } from 'svelte/store';
-  import { boids, weights, speeds, visualSettings, groupSettings, mouseSettings, numGroups, BOID_COLORS, resetBoids, numBoids } from './lib/boidsStore';
-  import { gameState, endGame } from './lib/gameStore';
-  import { addScore } from './lib/leaderboardStore';
-  import { COLOR_NAMES } from './lib/constants';
-  import ControlPanel from './lib/ControlPanel.svelte';
-  import StartScreen from './lib/StartScreen.svelte';
-  import GameOverScreen from './lib/GameOverScreen.svelte';
-  import GroupStats from './lib/GroupStats.svelte';
-  import Timer from './lib/Timer.svelte';
-  import Leaderboard from './lib/Leaderboard.svelte';
-  import Countdown from './lib/Countdown.svelte';
-  import { powerupSettings, activePowerups, activePowerupEffects, spawnPowerup, removePowerup, addPowerupEffect } from './lib/powerupStore';
-  import PowerupNotification from './lib/PowerupNotification.svelte';
-  import EliminationScreen from './lib/EliminationScreen.svelte';
+  import { 
+    boids, weights, speeds, visualSettings, groupSettings, mouseSettings, 
+    numGroups, BOID_COLORS, resetBoids, numBoids, doctrine 
+  } from './lib/boidsStore';
+  import { gameState, startGame, endGame } from './lib/gameStore';
+  import { 
+    TEAM, COLOR_NAMES, ARENA_W, ARENA_H, WALLS, SECTOR_W, SECTOR_H, 
+    SECTOR_LABELS, SECTOR_COLS, SECTOR_ROWS, START_MORALE, 
+    MORALE_RECOVERY_RATE, MORALE_DECAY_PER_POWERUP, POWERUP_TYPES
+  } from './lib/constants';
+
+  let canvas, ctx;
   
-  let canvas;
-  let ctx;
-  let lastGroupCounts = {};
-  let dominantColor = '#000000';
-  let powerupSpawnInterval;
+  // Camera state
+  let camera = { x: ARENA_W / 2, y: ARENA_H / 2, zoom: 0.4, targetZoom: 0.4 };
+  const minZoom = 0.2;
+  const maxZoom = 1.5;
+  
+  // Mouse/touch state
+  let isDragging = false, lastMousePos = { x: 0, y: 0 };
+  let mouseWorldPos = { x: 0, y: 0 }, isTouching = false;
+  
+  // Morale tracking
+  let morale = { [TEAM.PLAYER]: START_MORALE, [TEAM.AI]: START_MORALE };
+  
+  // Pause state
+  let isPaused = false, slowMoRemaining = 0;
+  
+  // Power-ups state
+  let activePowerups = [], powerupCooldowns = { BOMB: 0, TRACTOR: 0 };
+  
+  // Alerts
+  let alerts = [];
   
   onMount(() => {
-      ctx = canvas.getContext('2d');
-      resizeCanvas();
-      resetBoids(get(numBoids), canvas.width, canvas.height, get(numGroups));
-      window.addEventListener('resize', resizeCanvas);
-      requestAnimationFrame(update);
+    ctx = canvas.getContext('2d');
+    resizeCanvas();
+    startGame(TEAM.PLAYER);
+    
+    window.addEventListener('resize', resizeCanvas);
+    canvas.addEventListener('wheel', handleWheel, { passive: false });
+    canvas.addEventListener('mousedown', handleMouseDown);
+    canvas.addEventListener('mousemove', handleMouseMove);
+    canvas.addEventListener('mouseup', handleMouseUp);
+    canvas.addEventListener('touchstart', handleTouchStart, { passive: false });
+    canvas.addEventListener('touchmove', handleTouchMove, { passive: false });
+    canvas.addEventListener('touchend', handleTouchEnd);
+    
+    requestAnimationFrame(update);
+    
+    return () => window.removeEventListener('resize', resizeCanvas);
   });
-
-  // Add a proper $: reactive statement for game state
-  $: {
-      if ($gameState.status === 'running') {
-          if (!powerupSpawnInterval) {
-              powerupSpawnInterval = setInterval(() => {
-                  spawnPowerup(canvas.width, canvas.height);
-              }, $powerupSettings.spawnInterval);
-          }
-      } else if (powerupSpawnInterval) {
-          clearInterval(powerupSpawnInterval);
-          powerupSpawnInterval = null;
-      }
-  }
-
-  function countGroups() {
-      const counts = {};
-      $boids.boids.forEach(boid => {
-          counts[boid.groupIndex] = (counts[boid.groupIndex] || 0) + 1;
-      });
-      return counts;
-  }
-  
-  function getDominantGroup(counts) {
-      let maxCount = 0;
-      let dominantGroup = 0;
-      let totalBoids = 0;
-      
-      // First pass: count total boids and find max
-      Object.entries(counts).forEach(([group, count]) => {
-          totalBoids += count;
-          if (count > maxCount) {
-              maxCount = count;
-              dominantGroup = parseInt(group);
-          }
-      });
-
-      // Only consider it dominant if it actually has boids
-      if (maxCount === 0) {
-          return { group: null, ratio: 0 };
-      }
-
-      return { 
-          group: dominantGroup, 
-          ratio: maxCount / totalBoids,
-          totalBoids 
-      };
-  }
-  
-  function checkForWinner(groupCounts) {
-      // Clean up any zero-count groups
-      Object.keys(groupCounts).forEach(key => {
-          if (groupCounts[key] === 0) {
-              delete groupCounts[key];
-          }
-      });
-
-      // Get active groups
-      const activeGroups = Object.keys(groupCounts)
-          .map(g => parseInt(g))
-          .filter(g => groupCounts[g] > 0);
-      
-      // First check if player's pick has been eliminated
-      if ($gameState.playerPick !== null && !groupCounts[$gameState.playerPick]) {
-          // Update game state to indicate player elimination without ending the game
-          if (!$gameState.isEliminated) {
-              gameState.update(state => ({
-                  ...state,
-                  isEliminated: true,
-                  showEliminationScreen: true
-              }));
-          }
-          
-          // Only end the game if there's a final winner
-          if (activeGroups.length === 1) {
-              endGame($gameState.playerPick, true, activeGroups[0]);
-              return null;
-          }
-      }
-
-      // Check if any group has absolute dominance
-      const { group, ratio, totalBoids } = getDominantGroup(groupCounts);
-      
-      // Only declare winner if there are actually boids and one group has them all
-      if (totalBoids > 0 && ratio === 1) {
-          const playerWon = group === $gameState.playerPick;
-          if (playerWon) {
-              addScore({
-                  time: Date.now() - $gameState.startTime,
-                  groupIndex: group,
-                  wasCorrect: true
-              });
-          }
-          endGame(group, false);
-          return group;
-      }
-      return null;
-  }
   
   function resizeCanvas() {
-      canvas.width = window.innerWidth * 0.8;
-      canvas.height = window.innerHeight * 0.8;
-      
-      // Only update quadtree bounds without resetting boids
-      if ($boids.quadtree) {
-          $boids.quadtree.bounds = {
-              x: 0,
-              y: 0,
-              width: canvas.width,
-              height: canvas.height
-          };
-          
-          // Update quadtree with existing boids
-          $boids.quadtree.clear();
-          for (const boid of $boids.boids) {
-              // Keep boids within new canvas bounds
-              if (boid.position.x > canvas.width) boid.position.x = canvas.width;
-              if (boid.position.y > canvas.height) boid.position.y = canvas.height;
-              $boids.quadtree.insert(boid);
-          }
-      }
-  }
-
-  function drawFish(x, y, vx, vy, color, size, isSelectedGroup, powerupGlow) {
-      const angle = Math.atan2(vy, vx);
-  
-      ctx.save();
-      ctx.translate(x, y);
-      ctx.rotate(angle);
-  
-      // Draw powerup glow effect
-      if (powerupGlow) {
-          ctx.shadowColor = color;
-          ctx.shadowBlur = 15;
-          ctx.globalAlpha = 0.7;
-          
-          // Extra glow for powerup effect
-          ctx.beginPath();
-          ctx.moveTo(-size * 1.8, 0);
-          ctx.lineTo(-size * 1.2, -size * 1.2);
-          ctx.lineTo(size * 1.8, 0);
-          ctx.lineTo(-size * 1.2, size * 1.2);
-          ctx.closePath();
-          ctx.fillStyle = color;
-          ctx.fill();
-          
-          ctx.shadowBlur = 0;
-          ctx.globalAlpha = 1;
-      }
-
-      // Draw halo for selected group
-      if (isSelectedGroup) {
-          ctx.beginPath();
-          ctx.moveTo(-size * 1.5, 0);
-          ctx.lineTo(-size, -size);
-          ctx.lineTo(size * 1.5, 0);
-          ctx.lineTo(-size, size);
-          ctx.closePath();
-          ctx.strokeStyle = color;
-          ctx.lineWidth = 2;
-          ctx.globalAlpha = 0.3;
-          ctx.stroke();
-          ctx.globalAlpha = 1;
-      }
-  
-      // Draw fish body
-      ctx.beginPath();
-      ctx.moveTo(-size, 0);
-      ctx.lineTo(-size/2, -size/2);
-      ctx.lineTo(size, 0);
-      ctx.lineTo(-size/2, size/2);
-      ctx.closePath();
-      ctx.fillStyle = color;
-      ctx.fill();
-  
-      ctx.restore();
-  }
-
-  function handleMouseMove(event) {
-      const rect = canvas.getBoundingClientRect();
-      $mouseSettings.position = {
-          x: event.clientX - rect.left,
-          y: event.clientY - rect.top
-      };
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
   }
   
-  function update() {
-        if (!ctx) return;
-
-        // Calculate background color based on dominant group
-        if ($gameState.status === 'running') {
-            const currentGroups = countGroups();
-            const { group, ratio } = getDominantGroup(currentGroups);
-            const targetColor = BOID_COLORS[group] + '33'; // 20% opacity version of color
-            dominantColor = targetColor;
-            lastGroupCounts = currentGroups;
-        }
-
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.2)';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-        // Only update boid positions if game is running
-        if ($gameState.status === 'running') {
-            const boidsData = get(boids);
-            boidsData.boids.forEach(boid => {
-                boid.update(canvas.width, canvas.height, boidsData, $weights, $speeds, $visualSettings, $groupSettings, $mouseSettings, $activePowerupEffects);
-            });
-            boidsData.quadtree.update(boidsData.boids);
-        }
-
-        // Draw powerups
-        if ($gameState.status === 'running') {
-            $activePowerups.forEach(powerup => {
-                ctx.save();
-
-                // Draw glow effect
-                ctx.shadowColor = powerup.color;
-                ctx.shadowBlur = 15;
-
-                // Draw rotating square
-                const size = $powerupSettings.size;
-                const rotation = (Date.now() - powerup.createdAt) * 0.003;
-
-                ctx.translate(powerup.x, powerup.y);
-                ctx.rotate(rotation);
-
-                // Inner square
-                ctx.fillStyle = powerup.color;
-                ctx.fillRect(-size / 2, -size / 2, size, size);
-
-                // Outer rotating square
-                ctx.strokeStyle = powerup.color;
-                ctx.lineWidth = 2;
-                const outerSize = size * 1.5;
-                ctx.strokeRect(-outerSize / 2, -outerSize / 2, outerSize, outerSize);
-
-                // Icon based on powerup type
-                ctx.fillStyle = 'white';
-                ctx.font = '12px Arial';
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                ctx.rotate(-rotation); // Un-rotate for the icon
-                const icon = powerup.type === 'speed' ? '⚡' :
-                    powerup.type === 'size' ? '📏' : '💪';
-                ctx.fillText(icon, 0, 0);
-
-                ctx.restore();
-
-                // Check for collisions with player's group boids
-                $boids.boids.forEach(boid => {
-                    if (boid.checkPowerupCollision(powerup, size, $gameState.playerPick)) {
-                        removePowerup(powerup);
-                        addPowerupEffect($gameState.playerPick, powerup);
-                    }
-                });
-            });
-        }
-
-        // Always draw boids and trails, even when paused
-        $boids.boids.forEach(boid => {
-            // Draw trail
-            if (boid.trail.length > 1) {
-                ctx.beginPath();
-                ctx.moveTo(boid.trail[0].x, boid.trail[0].y);
-                for (let i = 1; i < boid.trail.length; i++) {
-                    ctx.lineTo(boid.trail[i].x, boid.trail[i].y);
-                }
-                const opacity = Math.floor($visualSettings.trailOpacity * 255).toString(16).padStart(2, '0');
-                ctx.strokeStyle = boid.color + opacity;
-                ctx.lineWidth = $visualSettings.trailWidth;
-                ctx.stroke();
-            }
-
-            // Check if boid has any active powerup effects
-            const hasPowerup = $activePowerupEffects.some(effect =>
-                effect.groupIndex === boid.groupIndex
-            );
-
-            // Draw fish with size multiplier and powerup glow
-            const effectiveSize = $visualSettings.boidSize * (boid.sizeMultiplier || 1);
-            drawFish(
-                boid.position.x,
-                boid.position.y,
-                boid.velocity.x,
-                boid.velocity.y,
-                boid.color,
-                effectiveSize,
-                $gameState.status === 'running' && boid.groupIndex === $gameState.playerPick,
-                hasPowerup
-            );
-        });
-
-        // Update group counts and check for winner
-        if ($gameState.status === 'running') {
-            const winner = checkForWinner(lastGroupCounts);
-            if (winner !== null) {
-                endGame(winner);
-            }
-        }
-
-        requestAnimationFrame(update);
+  function screenToWorld(screenX, screenY) {
+    return {
+      x: (screenX - canvas.width / 2) / camera.zoom + camera.x,
+      y: (screenY - canvas.height / 2) / camera.zoom + camera.y
+    };
+  }
+  
+  function handleWheel(e) {
+    e.preventDefault();
+    const delta = -e.deltaY * 0.001;
+    camera.targetZoom = Math.max(minZoom, Math.min(maxZoom, camera.targetZoom * (1 + delta)));
+  }
+  
+  function handleMouseDown(e) {
+    if (e.button === 0) {
+      isDragging = true;
+      lastMousePos = { x: e.clientX, y: e.clientY };
+      mouseWorldPos = screenToWorld(e.clientX, e.clientY);
+      isTouching = true;
     }
-  </script>
+  }
   
-  <main style="--background-color: {dominantColor}" on:mousemove={handleMouseMove}>
-      <canvas bind:this={canvas} style="border: 4px solid {dominantColor ? dominantColor.slice(0, -2) : '#000'}"></canvas>
+  function handleMouseMove(e) {
+    if (isDragging && e.shiftKey) {
+      camera.x -= (e.clientX - lastMousePos.x) / camera.zoom;
+      camera.y -= (e.clientY - lastMousePos.y) / camera.zoom;
+      camera.x = Math.max(0, Math.min(ARENA_W, camera.x));
+      camera.y = Math.max(0, Math.min(ARENA_H, camera.y));
+    }
+    lastMousePos = { x: e.clientX, y: e.clientY };
+    mouseWorldPos = screenToWorld(e.clientX, e.clientY);
+  }
+  
+  function handleMouseUp() {
+    isDragging = false;
+    isTouching = false;
+  }
+  
+  function handleTouchStart(e) {
+    e.preventDefault();
+    if (e.touches.length === 1) {
+      const t = e.touches[0];
+      isDragging = true;
+      lastMousePos = { x: t.clientX, y: t.clientY };
+      mouseWorldPos = screenToWorld(t.clientX, t.clientY);
+      isTouching = true;
+    }
+  }
+  
+  function handleTouchMove(e) {
+    e.preventDefault();
+    if (e.touches.length === 1 && isDragging) {
+      const t = e.touches[0];
+      mouseWorldPos = screenToWorld(t.clientX, t.clientY);
+      lastMousePos = { x: t.clientX, y: t.clientY };
+    }
+  }
+  
+  function handleTouchEnd() {
+    isDragging = false;
+    isTouching = false;
+  }
+  
+  function togglePause() {
+    isPaused = !isPaused;
+    if (!isPaused) slowMoRemaining = 750;
+  }
+  
+  function placePowerup(type) {
+    if (powerupCooldowns[type] > 0) return;
+    const def = POWERUP_TYPES[type];
+    activePowerups.push({ ...def, x: mouseWorldPos.x, y: mouseWorldPos.y, placedAt: Date.now() });
+    powerupCooldowns[type] = def.cooldown;
+    morale[TEAM.PLAYER] = Math.max(0, morale[TEAM.PLAYER] - MORALE_DECAY_PER_POWERUP);
+    alerts.push({ id: Date.now(), text: `${type} deployed`, time: Date.now() });
+  }
+  
+  function countTeams() {
+    const counts = { [TEAM.PLAYER]: 0, [TEAM.AI]: 0 };
+    $boids.boids.forEach(b => { if (counts[b.groupIndex] !== undefined) counts[b.groupIndex]++; });
+    return counts;
+  }
+  
+  function update(timestamp) {
+    if (!ctx) return;
+    
+    camera.zoom += (camera.targetZoom - camera.zoom) * 0.1;
+    
+    const dt = 16;
+    Object.keys(powerupCooldowns).forEach(k => {
+      if (powerupCooldowns[k] > 0) powerupCooldowns[k] = Math.max(0, powerupCooldowns[k] - dt);
+    });
+    
+    const timeScale = slowMoRemaining > 0 ? 0.3 : 1.0;
+    if (slowMoRemaining > 0) slowMoRemaining = Math.max(0, slowMoRemaining - dt);
+    
+    ctx.fillStyle = '#0a0a0a';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    
+    ctx.save();
+    ctx.translate(canvas.width / 2, canvas.height / 2);
+    ctx.scale(camera.zoom, camera.zoom);
+    ctx.translate(-camera.x, -camera.y);
+    
+    // Draw arena border
+    ctx.strokeStyle = '#333';
+    ctx.lineWidth = 4 / camera.zoom;
+    ctx.strokeRect(0, 0, ARENA_W, ARENA_H);
+    
+    // Draw sector grid
+    ctx.strokeStyle = '#1a1a1a';
+    ctx.lineWidth = 1 / camera.zoom;
+    for (let col = 1; col < SECTOR_COLS; col++) {
+      ctx.beginPath();
+      ctx.moveTo(col * SECTOR_W, 0);
+      ctx.lineTo(col * SECTOR_W, ARENA_H);
+      ctx.stroke();
+    }
+    for (let row = 1; row < SECTOR_ROWS; row++) {
+      ctx.beginPath();
+      ctx.moveTo(0, row * SECTOR_H);
+      ctx.lineTo(ARENA_W, row * SECTOR_H);
+      ctx.stroke();
+    }
+    
+    // Draw walls
+    ctx.fillStyle = '#666';
+    WALLS.forEach(w => ctx.fillRect(w.x, w.y, w.w, w.h));
+    
+    // Update boids
+    if (!isPaused && $gameState.status === 'running') {
+      const boidsData = get(boids);
+      const currentDoctrine = get(doctrine);
+      const currentWeights = get(weights);
       
-      {#if $gameState.status === 'running'}
-          <div class="titlebar" style="--color: {BOID_COLORS[$gameState.playerPick]}">
-              {#if $gameState.isEliminated && !$gameState.showEliminationScreen}
-                  <span class="spectator">Spectating</span>
-              {:else if !$gameState.isEliminated}
-                  Your Team: {COLOR_NAMES[BOID_COLORS[$gameState.playerPick]]}
-              {/if}
-          </div>
-      {/if}
-  
-      {#if $gameState.status === 'config'}
-          <div class="control-container config-mode">
-              <ControlPanel />
-          </div>
-      {:else if $gameState.status === 'start'}
-          <div class="control-container">
-              <StartScreen />
-          </div>
-      {:else if $gameState.status === 'countdown'}
-          <Countdown />
-      {:else if $gameState.status === 'finished'}
-          <GameOverScreen />
-      {/if}
-  
-      {#if $gameState.status === 'running' && $gameState.showEliminationScreen}
-          <EliminationScreen />
-      {/if}
-  
-      {#if $gameState.status === 'running'}
-          <GroupStats groupCounts={lastGroupCounts} />
-          <Timer />
-      {/if}
-      <Leaderboard />
-      <PowerupNotification />
-  </main>
-  
-  <style>
-  main {
-      position: relative;
-      width: 100%;
-      height: 100%;
-      background-color: var(--background-color);
-      transition: background-color 1s ease;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-  }
-
-  canvas {
-      display: block;
-      background-color: transparent;
-      box-sizing: border-box;
-  }
-
-  .titlebar {
-      position: fixed;
-      top: 0;
-      left: 50%;
-      transform: translateX(-50%);
-      background: rgba(0, 0, 0, 0.8);
-      color: var(--color);
-      padding: 10px 20px;
-      border-radius: 0 0 8px 8px;
-      font-size: 18px;
-      font-weight: bold;
-      z-index: 100;
-  }
-  
-  /* Control Container Styles */
-  .control-container {
-      position: absolute; /* Use absolute positioning for overlay */
-      top: 50%;
-      left: 50%;
-      transform: translate(-50%, -50%); /* Center the container */
-      width: 80%; /* Adjust width as needed */
-      max-width: 600px; /* Set a maximum width */
-      display: flex;
-      flex-direction: column; /* Stack ControlPanel and StartScreen vertically */
-      align-items: center; /* Center content horizontally */
-      gap: 20px; /* Space between ControlPanel and StartScreen */
-      pointer-events: auto; /* Enable interactions */
-      z-index: 10; /* Ensure controls are above the canvas */
-  }
-  
-  /* Control Panel Styles */
-  .control-container > :global(.control-panel) {
-      background-color: rgba(255, 255, 255, 0.9);
-      border: 1px solid #ccc;
-      padding: 20px;
-      box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
-      border-radius: 8px;
-      width: 100%; /* Take full width of the container */
-      box-sizing: border-box; /* Include padding and border in the width */
-      display: grid; /* Or flex, depending on your ControlPanel's content */
-      grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); /* Responsive columns */
-      gap: 10px;
-      /* Customize scrollbar for Firefox */
-      scrollbar-color: black rgba(0, 0, 0, 0.1);
-      scrollbar-width: thick;
-      /* Customize scrollbar for Webkit browsers */
-      &::-webkit-scrollbar {
-          width: 28px;
-          height: 28px;
+      const doctrineWeights = {
+        ...currentWeights,
+        cohesion: currentWeights.cohesion * (0.5 + currentDoctrine.cohesion),
+        separation: currentWeights.separation * (0.5 + currentDoctrine.separation)
+      };
+      
+      boidsData.boids.forEach(boid => {
+        const mouseSettingsForBoid = boid.groupIndex === TEAM.PLAYER && isTouching 
+          ? { ...$mouseSettings, position: mouseWorldPos, active: true }
+          : { ...$mouseSettings, active: false };
+        
+        boid.update(ARENA_W, ARENA_H, boidsData, doctrineWeights, $speeds, $visualSettings, 
+          { ...$groupSettings, loyaltyFactor: currentDoctrine.bravery }, mouseSettingsForBoid, []);
+      });
+      
+      boidsData.quadtree.update(boidsData.boids);
+      
+      // Process power-ups
+      activePowerups = activePowerups.filter(powerup => {
+        const elapsed = Date.now() - powerup.placedAt;
+        
+        if (powerup.type === 'BOMB' && elapsed >= powerup.fuseMs) {
+          boidsData.boids.forEach(boid => {
+            const dx = boid.position.x - powerup.x, dy = boid.position.y - powerup.y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist < powerup.radius) {
+              const force = (1 - dist / powerup.radius) * powerup.impulse;
+              boid.velocity.x += (dx / dist) * force;
+              boid.velocity.y += (dy / dist) * force;
+              boid.morale = Math.max(0, boid.morale - powerup.moraleHit);
+            }
+          });
+          return false;
+        }
+        
+        if (powerup.type === 'TRACTOR' && elapsed < powerup.durationMs) {
+          boidsData.boids.forEach(boid => {
+            const dx = powerup.x - boid.position.x, dy = powerup.y - boid.position.y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist < powerup.radius) {
+              boid.velocity.x += (dx / dist) * powerup.pull;
+              boid.velocity.y += (dy / dist) * powerup.pull;
+            }
+          });
+          return true;
+        } else if (powerup.type === 'TRACTOR') {
+          return false;
+        }
+        
+        return true;
+      });
+      
+      morale[TEAM.PLAYER] = Math.min(1, morale[TEAM.PLAYER] + MORALE_RECOVERY_RATE);
+      morale[TEAM.AI] = Math.min(1, morale[TEAM.AI] + MORALE_RECOVERY_RATE);
+      
+      const teamCounts = countTeams();
+      if (teamCounts[TEAM.PLAYER] === 0) endGame(TEAM.AI, false);
+      else if (teamCounts[TEAM.AI] === 0) endGame(TEAM.PLAYER, false);
+    }
+    
+    // Draw powerups
+    activePowerups.forEach(powerup => {
+      const elapsed = Date.now() - powerup.placedAt;
+      
+      if (powerup.type === 'BOMB') {
+        ctx.fillStyle = powerup.color;
+        ctx.globalAlpha = 0.6 + Math.sin(elapsed * 0.01) * 0.4;
+        ctx.beginPath();
+        ctx.arc(powerup.x, powerup.y, 15 / camera.zoom, 0, Math.PI * 2);
+        ctx.fill();
+        
+        ctx.strokeStyle = powerup.color;
+        ctx.globalAlpha = 0.3;
+        ctx.lineWidth = 2 / camera.zoom;
+        ctx.beginPath();
+        ctx.arc(powerup.x, powerup.y, powerup.radius, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      } else if (powerup.type === 'TRACTOR') {
+        ctx.strokeStyle = powerup.color;
+        ctx.globalAlpha = 0.4;
+        ctx.lineWidth = 3 / camera.zoom;
+        ctx.beginPath();
+        ctx.arc(powerup.x, powerup.y, powerup.radius, 0, Math.PI * 2);
+        ctx.stroke();
+        
+        ctx.fillStyle = powerup.color;
+        ctx.globalAlpha = 0.8;
+        ctx.beginPath();
+        ctx.arc(powerup.x, powerup.y, 10 / camera.zoom, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = 1;
       }
-      &::-webkit-scrollbar-track {
-          background: rgba(0, 0, 0, 0.1);
-          border-radius: 4px;
+    });
+    
+    // Draw boids
+    $boids.boids.forEach(boid => {
+      if (boid.trail.length > 1) {
+        ctx.beginPath();
+        ctx.moveTo(boid.trail[0].x, boid.trail[0].y);
+        for (let i = 1; i < boid.trail.length; i++) ctx.lineTo(boid.trail[i].x, boid.trail[i].y);
+        ctx.strokeStyle = boid.color + '40';
+        ctx.lineWidth = $visualSettings.trailWidth / camera.zoom;
+        ctx.stroke();
       }
-      &::-webkit-scrollbar-thumb {
-          background-color: black;
-          border-radius: 4px;
+      
+      const angle = Math.atan2(boid.velocity.y, boid.velocity.x);
+      const size = $visualSettings.boidSize / camera.zoom;
+      
+      ctx.save();
+      ctx.translate(boid.position.x, boid.position.y);
+      ctx.rotate(angle);
+      ctx.beginPath();
+      ctx.moveTo(size, 0);
+      ctx.lineTo(-size * 0.6, -size * 0.5);
+      ctx.lineTo(-size * 0.6, size * 0.5);
+      ctx.closePath();
+      ctx.fillStyle = boid.color;
+      ctx.fill();
+      ctx.restore();
+    });
+    
+    ctx.restore();
+    
+    drawHUD();
+    alerts = alerts.filter(a => Date.now() - a.time < 3000);
+    
+    requestAnimationFrame(update);
+  }
+  
+  function drawHUD() {
+    const teamCounts = countTeams();
+    
+    // Mini-map
+    const mapSize = 180, mapX = canvas.width - mapSize - 20, mapY = canvas.height - mapSize - 20;
+    const mapScale = mapSize / Math.max(ARENA_W, ARENA_H);
+    
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+    ctx.fillRect(mapX, mapY, mapSize, mapSize);
+    ctx.strokeStyle = '#333';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(mapX, mapY, mapSize, mapSize);
+    
+    ctx.fillStyle = '#444';
+    WALLS.forEach(w => ctx.fillRect(mapX + w.x * mapScale, mapY + w.y * mapScale, w.w * mapScale, w.h * mapScale));
+    
+    const viewW = (canvas.width / camera.zoom) * mapScale, viewH = (canvas.height / camera.zoom) * mapScale;
+    const viewX = mapX + camera.x * mapScale - viewW / 2, viewY = mapY + camera.y * mapScale - viewH / 2;
+    ctx.strokeStyle = '#00FFFF';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(viewX, viewY, viewW, viewH);
+    
+    // Morale bars
+    const barW = 200, barH = 20, barX = 20;
+    let barY = 60;
+    
+    ctx.font = '14px monospace';
+    ctx.fillStyle = '#fff';
+    ctx.fillText('PLAYER MORALE', barX, barY - 5);
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+    ctx.fillRect(barX, barY, barW, barH);
+    ctx.fillStyle = morale[TEAM.PLAYER] > 0.5 ? '#00FFFF' : '#FF4500';
+    ctx.fillRect(barX, barY, barW * morale[TEAM.PLAYER], barH);
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(barX, barY, barW, barH);
+    
+    barY += 50;
+    ctx.fillStyle = '#fff';
+    ctx.fillText('AI MORALE', barX, barY - 5);
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+    ctx.fillRect(barX, barY, barW, barH);
+    ctx.fillStyle = morale[TEAM.AI] > 0.5 ? '#FF1493' : '#FF4500';
+    ctx.fillRect(barX, barY, barW * morale[TEAM.AI], barH);
+    ctx.strokeStyle = '#fff';
+    ctx.strokeRect(barX, barY, barW, barH);
+    
+    barY += 40;
+    ctx.font = '16px monospace';
+    ctx.fillStyle = '#00FFFF';
+    ctx.fillText(`PLAYER: ${teamCounts[TEAM.PLAYER]}`, barX, barY);
+    barY += 25;
+    ctx.fillStyle = '#FF1493';
+    ctx.fillText(`AI: ${teamCounts[TEAM.AI]}`, barX, barY);
+    
+    // Power-up buttons
+    const btnW = 80, btnH = 40;
+    let btnX = 20;
+    const btnY = canvas.height - 60;
+    
+    Object.entries(POWERUP_TYPES).forEach(([key, powerup]) => {
+      const onCooldown = powerupCooldowns[key] > 0;
+      ctx.fillStyle = onCooldown ? 'rgba(50, 50, 50, 0.8)' : 'rgba(0, 0, 0, 0.8)';
+      ctx.fillRect(btnX, btnY, btnW, btnH);
+      ctx.strokeStyle = onCooldown ? '#555' : powerup.color;
+      ctx.lineWidth = 2;
+      ctx.strokeRect(btnX, btnY, btnW, btnH);
+      ctx.font = '12px monospace';
+      ctx.fillStyle = onCooldown ? '#777' : '#fff';
+      ctx.textAlign = 'center';
+      ctx.fillText(key, btnX + btnW / 2, btnY + 20);
+      if (onCooldown) {
+        const progress = powerupCooldowns[key] / powerup.cooldown;
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+        ctx.fillRect(btnX, btnY + btnH - 4, btnW * (1 - progress), 4);
       }
+      btnX += btnW + 10;
+    });
+    ctx.textAlign = 'left';
+    
+    // Pause button
+    const pauseBtnX = canvas.width - 100, pauseBtnY = 20;
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+    ctx.fillRect(pauseBtnX, pauseBtnY, 80, 40);
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(pauseBtnX, pauseBtnY, 80, 40);
+    ctx.font = '14px monospace';
+    ctx.fillStyle = '#fff';
+    ctx.textAlign = 'center';
+    ctx.fillText(isPaused ? 'RESUME' : 'PAUSE', pauseBtnX + 40, pauseBtnY + 25);
+    ctx.textAlign = 'left';
+    
+    // Alerts
+    let alertY = 20;
+    alerts.forEach(alert => {
+      const age = Date.now() - alert.time, alpha = Math.max(0, 1 - age / 3000);
+      ctx.font = '14px monospace';
+      ctx.fillStyle = `rgba(255, 255, 0, ${alpha})`;
+      ctx.textAlign = 'center';
+      ctx.fillText(alert.text, canvas.width / 2, alertY);
+      ctx.textAlign = 'left';
+      alertY += 25;
+    });
   }
   
-  /* Start Screen Styles */
-  .control-container > :global(.start-screen) {
-      background-color: rgba(240, 240, 240, 0.9);
-      border: 1px solid #ddd;
-      padding: 20px;
-      border-radius: 8px;
-      text-align: center;  /* Center the content */
-      width: 100%;
-      box-sizing: border-box;
-  }
-  
-  /* Player Selection Styles (inside StartScreen) */
-  .control-container > :global(.start-screen .player-selection) {
-      display: flex;
-      flex-wrap: wrap; /* Allow buttons to wrap */
-      justify-content: center; /* Center buttons horizontally */
-      gap: 10px; /* Space between buttons */
-      margin-top: 15px;
-  }
-  
-  /* Group Button Styles */
-  .control-container > :global(.start-screen .group-button) {
-      padding: 10px 20px;
-      font-size: 16px;
-      border: 2px solid #ccc;
-      border-radius: 5px;
-      background-color: white;
-      cursor: pointer;
-      transition: background-color 0.3s, border-color 0.3s;
-  }
-  .control-container > :global(.start-screen .group-button:hover){
-     background-color: #f0f0f0;
-      border-color: #999;
-  }
-  
-  /* Responsive adjustments (optional, but recommended) */
-  @media (max-width: 768px) {
-      .control-container {
-          width: 95%; /* Wider on smaller screens */
+  function handleCanvasClick(e) {
+    const rect = canvas.getBoundingClientRect(), x = e.clientX - rect.left, y = e.clientY - rect.top;
+    
+    const pauseBtnX = canvas.width - 100, pauseBtnY = 20;
+    if (x >= pauseBtnX && x <= pauseBtnX + 80 && y >= pauseBtnY && y <= pauseBtnY + 40) {
+      togglePause();
+      return;
+    }
+    
+    const btnW = 80, btnH = 40;
+    let btnX = 20;
+    const btnY = canvas.height - 60;
+    
+    for (const key of Object.keys(POWERUP_TYPES)) {
+      if (x >= btnX && x <= btnX + btnW && y >= btnY && y <= btnY + btnH) {
+        placePowerup(key);
+        return;
       }
+      btnX += btnW + 10;
+    }
   }
+</script>
 
-  .config-mode {
-      background: rgba(0, 0, 0, 0.85);
-      width: 100%;
-      height: 100%;
-      max-width: none;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-  }
+<main>
+  <canvas bind:this={canvas} on:click={handleCanvasClick}></canvas>
+  
+  {#if $gameState.status === 'finished'}
+    <div class="overlay game-over">
+      <div class="game-over-panel">
+        <h1>MISSION {$gameState.winner === TEAM.PLAYER ? 'COMPLETE' : 'FAILED'}</h1>
+        <p>
+          {#if $gameState.winner === TEAM.PLAYER}
+            Monoculture achieved. All swarms converted.
+          {:else}
+            Player swarm eliminated. AI dominance established.
+          {/if}
+        </p>
+        <button on:click={() => window.location.reload()}>NEW MISSION</button>
+      </div>
+    </div>
+  {/if}
+  
+  {#if isPaused && $gameState.status === 'running'}
+    <div class="overlay pause-screen">
+      <div class="tactical-briefing">
+        <h2>TACTICAL BRIEFING</h2>
+        <div class="doctrine-section">
+          <h3>Doctrine Settings</h3>
+          <label>
+            Cohesion: {$doctrine.cohesion.toFixed(2)}
+            <input type="range" min="0" max="1" step="0.1" bind:value={$doctrine.cohesion} />
+          </label>
+          <label>
+            Separation: {$doctrine.separation.toFixed(2)}
+            <input type="range" min="0" max="1" step="0.1" bind:value={$doctrine.separation} />
+          </label>
+          <label>
+            Bravery: {$doctrine.bravery.toFixed(2)}
+            <input type="range" min="0" max="1" step="0.1" bind:value={$doctrine.bravery} />
+          </label>
+        </div>
+        <button class="resume-btn" on:click={togglePause}>RESUME MISSION</button>
+      </div>
+    </div>
+  {/if}
+</main>
 
-  .config-mode :global(.control-panel) {
-      max-width: 1200px;
-  }
-
-  .spectator {
-      color: #fff;
-      font-style: italic;
-      opacity: 0.8;
-  }
-  </style>
+<style>
+  main { width: 100vw; height: 100vh; margin: 0; padding: 0; overflow: hidden; background: #000; }
+  canvas { display: block; width: 100%; height: 100%; cursor: crosshair; }
+  .overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; display: flex; justify-content: center; align-items: center; background: rgba(0, 0, 0, 0.85); z-index: 100; }
+  .game-over-panel { background: rgba(0, 0, 0, 0.95); border: 2px solid #00FFFF; padding: 40px; text-align: center; font-family: monospace; }
+  .game-over-panel h1 { color: #00FFFF; font-size: 36px; margin: 0 0 20px 0; }
+  .game-over-panel p { color: #fff; font-size: 18px; margin: 0 0 30px 0; }
+  .game-over-panel button { background: #00FFFF; color: #000; border: none; padding: 15px 30px; font-size: 16px; font-family: monospace; font-weight: bold; cursor: pointer; transition: all 0.2s; }
+  .game-over-panel button:hover { background: #00DDDD; transform: scale(1.05); }
+  .pause-screen { background: rgba(0, 0, 0, 0.9); }
+  .tactical-briefing { background: #0a0a0a; border: 2px solid #00FFFF; padding: 30px; min-width: 400px; font-family: monospace; color: #fff; }
+  .tactical-briefing h2 { color: #00FFFF; text-align: center; margin: 0 0 30px 0; font-size: 24px; }
+  .tactical-briefing h3 { color: #00FFFF; font-size: 16px; margin: 0 0 15px 0; }
+  .doctrine-section { margin-bottom: 30px; }
+  .doctrine-section label { display: block; margin-bottom: 15px; color: #ccc; }
+  .doctrine-section input[type="range"] { width: 100%; margin-top: 5px; }
+  .resume-btn { width: 100%; background: #00FFFF; color: #000; border: none; padding: 15px; font-size: 16px; font-family: monospace; font-weight: bold; cursor: pointer; transition: all 0.2s; }
+  .resume-btn:hover { background: #00DDDD; }
+</style>

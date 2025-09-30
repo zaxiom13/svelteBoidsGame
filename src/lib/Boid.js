@@ -1,3 +1,5 @@
+import { WALLS, ARENA_W, ARENA_H } from './constants';
+
 export class Boid {
     constructor(x, y, vx, vy, groupIndex, colors) {
         this.position = { x, y };
@@ -8,16 +10,17 @@ export class Boid {
             this.velocity = { x: vx, y: vy };
         }
         this.maxSpeed = 4;
-        this.maxForce = 0.8; // Increased from 0.2 to make forces more impactful
+        this.maxForce = 0.8;
         this.groupIndex = groupIndex;
         this.colors = colors;
         this.color = colors[groupIndex];
         this.trail = [];
-        this.maxTrailLength = 5; // Reduced from 20 to match test expectations
+        this.maxTrailLength = 5;
         this.speedMultiplier = 1;
         this.sizeMultiplier = 1;
         this.strengthMultiplier = 1;
         this.timeFrozen = false;
+        this.morale = 0.75; // Individual morale
     }
 
     checkPowerupCollision(powerup, powerupSize, playerGroup) {
@@ -114,7 +117,9 @@ export class Boid {
             alignment: this.align(quadtree, visualSettings.neighborRadius * sizeInfluence),
             cohesion: this.cohesion(quadtree, visualSettings.neighborRadius * sizeInfluence),
             groupRepulsion: this.groupRepulsion(quadtree, visualSettings.neighborRadius * sizeInfluence),
-            mouseRepulsion: this.mouseRepulsion(mouseSettings)
+            mouseRepulsion: this.mouseRepulsion(mouseSettings),
+            wallAvoidance: this.avoidWalls(),
+            borderAvoidance: this.avoidBorders(canvasWidth, canvasHeight)
         };
 
         let acceleration = { x: 0, y: 0 };
@@ -152,23 +157,9 @@ export class Boid {
         this.position.x += this.velocity.x;
         this.position.y += this.velocity.y;
 
-        // Edge wrapping - clear trail when wrapping
-        if (this.position.x > canvasWidth) {
-            this.position.x = 0;
-            this.trail = [];
-        }
-        if (this.position.x < 0) {
-            this.position.x = canvasWidth;
-            this.trail = [];
-        }
-        if (this.position.y > canvasHeight) {
-            this.position.y = 0;
-            this.trail = [];
-        }
-        if (this.position.y < 0) {
-            this.position.y = canvasHeight;
-            this.trail = [];
-        }
+        // Clamp to arena bounds (no wrapping)
+        this.position.x = Math.max(0, Math.min(ARENA_W, this.position.x));
+        this.position.y = Math.max(0, Math.min(ARENA_H, this.position.y));
     }
 
     updateTrail() {
@@ -407,5 +398,64 @@ export class Boid {
         }
 
         return { x: 0, y: 0 };
+    }
+
+    avoidWalls() {
+        const steer = { x: 0, y: 0 };
+        const detectionRadius = 50;
+        
+        for (const wall of WALLS) {
+            // Find closest point on wall to boid
+            const closestX = Math.max(wall.x, Math.min(this.position.x, wall.x + wall.w));
+            const closestY = Math.max(wall.y, Math.min(this.position.y, wall.y + wall.h));
+            
+            const dx = this.position.x - closestX;
+            const dy = this.position.y - closestY;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+            
+            if (distance < detectionRadius && distance > 0) {
+                const force = (1 - distance / detectionRadius) * 2;
+                steer.x += (dx / distance) * force;
+                steer.y += (dy / distance) * force;
+            }
+        }
+        
+        const magnitude = Math.hypot(steer.x, steer.y);
+        if (magnitude > 0) {
+            steer.x = (steer.x / magnitude) * this.maxForce * 3; // Strong avoidance
+            steer.y = (steer.y / magnitude) * this.maxForce * 3;
+        }
+        
+        return steer;
+    }
+
+    avoidBorders(arenaW, arenaH) {
+        const steer = { x: 0, y: 0 };
+        const margin = 50;
+        
+        // Left border
+        if (this.position.x < margin) {
+            steer.x += (margin - this.position.x) / margin;
+        }
+        // Right border
+        if (this.position.x > arenaW - margin) {
+            steer.x -= (this.position.x - (arenaW - margin)) / margin;
+        }
+        // Top border
+        if (this.position.y < margin) {
+            steer.y += (margin - this.position.y) / margin;
+        }
+        // Bottom border
+        if (this.position.y > arenaH - margin) {
+            steer.y -= (this.position.y - (arenaH - margin)) / margin;
+        }
+        
+        const magnitude = Math.hypot(steer.x, steer.y);
+        if (magnitude > 0) {
+            steer.x = (steer.x / magnitude) * this.maxForce * 2;
+            steer.y = (steer.y / magnitude) * this.maxForce * 2;
+        }
+        
+        return steer;
     }
 }
