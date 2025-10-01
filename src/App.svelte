@@ -15,6 +15,7 @@
   let canvas, ctx;
   let canvasWidth = window.innerWidth;
   let canvasHeight = window.innerHeight;
+  let dpr = Math.min(window.devicePixelRatio || 1, 2);
   let isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
   
   // Camera state - adjusted for square arena (3200x3200)
@@ -27,8 +28,10 @@
   let touches = [];
   let lastPinchDist = null;
   let isDraggingCamera = false;
+  let isPanning = false;
   let isTouchingBoids = false;
   let lastTouchPos = { x: 0, y: 0 };
+  let panVelocity = { x: 0, y: 0 };
   let mouseWorldPos = { x: ARENA_W / 2, y: ARENA_H / 2 };
   
   // Game state
@@ -41,6 +44,18 @@
   // UI state
   let showPowerupMenu = false;
   let uiScale = 1;
+  let pendingPowerup = null; // def from POWERUP_TYPES
+  let pendingPowerupKey = null; // 'BOMB'|'TRACTOR'
+  let powerupMenuAnchor = null; // {x,y} in screen coords for contextual menu
+  let longPressTimer = null;
+  let isLongPressing = false;
+  let lastTapTime = 0;
+  let touchMoved = false;
+  let initialPressPos = { x: 0, y: 0 };
+
+  function haptic(ms = 10) {
+    try { if (navigator && typeof navigator.vibrate === 'function') navigator.vibrate(ms); } catch (e) {}
+  }
   
   onMount(() => {
     ctx = canvas.getContext('2d', { alpha: false });
@@ -52,6 +67,8 @@
     
     window.addEventListener('resize', updateCanvasSize);
     setupTouchEvents();
+    // Prevent context menu on right-click for smoother panning UX
+    canvas.addEventListener('contextmenu', (e) => e.preventDefault());
     
     animationFrameId = requestAnimationFrame(update);
     
@@ -64,8 +81,11 @@
   function updateCanvasSize() {
     canvasWidth = window.innerWidth;
     canvasHeight = window.innerHeight;
-    canvas.width = canvasWidth;
-    canvas.height = canvasHeight;
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.style.width = canvasWidth + 'px';
+    canvas.style.height = canvasHeight + 'px';
+    canvas.width = Math.floor(canvasWidth * dpr);
+    canvas.height = Math.floor(canvasHeight * dpr);
     uiScale = Math.min(window.innerWidth / 400, 1.2);
   }
   
@@ -80,6 +100,7 @@
       canvas.addEventListener('mousedown', handleMouseDown);
       canvas.addEventListener('mousemove', handleMouseMove);
       canvas.addEventListener('mouseup', handleMouseUp);
+      canvas.addEventListener('dblclick', handleDoubleClick);
       canvas.addEventListener('click', handleClick);
     }
   }
@@ -98,6 +119,32 @@
     };
   }
   
+  function clampCamera() {
+    camera.x = Math.max(0, Math.min(ARENA_W, camera.x));
+    camera.y = Math.max(0, Math.min(ARENA_H, camera.y));
+  }
+
+  function zoomAtPoint(factor, screenX, screenY) {
+    const before = screenToWorld(screenX, screenY);
+    const newTarget = Math.max(minZoom, Math.min(maxZoom, camera.targetZoom * factor));
+    camera.targetZoom = newTarget;
+    // Adjust camera so that the world point under the cursor stays under the cursor after zoom
+    camera.x = before.x - (screenX - canvasWidth / 2) / newTarget;
+    camera.y = before.y - (screenY - canvasHeight / 2) / newTarget;
+    clampCamera();
+  }
+
+  function detectDoubleTap(x, y) {
+    const now = Date.now();
+    if (now - lastTapTime < 300) {
+      zoomAtPoint(1.6, x, y);
+      haptic(8);
+      lastTapTime = 0;
+    } else {
+      lastTapTime = now;
+    }
+  }
+
   function handleTouchStart(e) {
     e.preventDefault();
     touches = Array.from(e.touches);
@@ -106,6 +153,8 @@
       const touch = touches[0];
       const x = touch.clientX;
       const y = touch.clientY;
+      // Double-tap to zoom
+      detectDoubleTap(x, y);
       
       // Check if touching UI elements
       if (isTouchingUI(x, y)) {
@@ -115,8 +164,22 @@
       
       // Otherwise, touch for boid influence
       lastTouchPos = { x, y };
+      initialPressPos = { x, y };
+      touchMoved = false;
       mouseWorldPos = screenToWorld(x, y);
       isTouchingBoids = true;
+
+      // Prepare long-press to open powerup menu near finger (only when no pending powerup)
+      if (!pendingPowerup && !showPowerupMenu) {
+        if (longPressTimer) clearTimeout(longPressTimer);
+        isLongPressing = false;
+        longPressTimer = setTimeout(() => {
+          isLongPressing = true;
+          showPowerupMenu = true;
+          powerupMenuAnchor = { x, y };
+          haptic(8);
+        }, 450);
+      }
       
     } else if (touches.length === 2) {
       // Two finger pinch/pan
@@ -142,6 +205,12 @@
       const touch = touches[0];
       mouseWorldPos = screenToWorld(touch.clientX, touch.clientY);
       lastTouchPos = { x: touch.clientX, y: touch.clientY };
+      const mdx = lastTouchPos.x - initialPressPos.x;
+      const mdy = lastTouchPos.y - initialPressPos.y;
+      if (Math.hypot(mdx, mdy) > 8) {
+        touchMoved = true;
+        if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
+      }
       
     } else if (touches.length === 2) {
       // Pinch zoom
@@ -149,25 +218,25 @@
       const dy = touches[0].clientY - touches[1].clientY;
       const newDist = Math.sqrt(dx * dx + dy * dy);
       
-      if (lastPinchDist) {
-        const zoomDelta = (newDist - lastPinchDist) * 0.005;
-        camera.targetZoom = Math.max(minZoom, Math.min(maxZoom, camera.targetZoom * (1 + zoomDelta)));
-      }
-      lastPinchDist = newDist;
-      
-      // Pan camera
+      // Pan camera using pinch center
       const centerX = (touches[0].clientX + touches[1].clientX) / 2;
       const centerY = (touches[0].clientY + touches[1].clientY) / 2;
       
-      if (lastTouchPos.x && lastTouchPos.y) {
-        const dx = centerX - lastTouchPos.x;
-        const dy = centerY - lastTouchPos.y;
-        camera.x -= dx / camera.zoom;
-        camera.y -= dy / camera.zoom;
-        camera.x = Math.max(0, Math.min(ARENA_W, camera.x));
-        camera.y = Math.max(0, Math.min(ARENA_H, camera.y));
+      if (lastPinchDist) {
+        const zoomDelta = (newDist - lastPinchDist) * 0.005;
+        zoomAtPoint(1 + zoomDelta, centerX, centerY);
       }
+      lastPinchDist = newDist;
       
+      if (lastTouchPos.x && lastTouchPos.y) {
+        const dx2 = centerX - lastTouchPos.x;
+        const dy2 = centerY - lastTouchPos.y;
+        camera.x -= dx2 / camera.zoom;
+        camera.y -= dy2 / camera.zoom;
+        panVelocity.x = (-dx2 / camera.zoom);
+        panVelocity.y = (-dy2 / camera.zoom);
+        clampCamera();
+      }
       lastTouchPos = { x: centerX, y: centerY };
     }
   }
@@ -180,6 +249,17 @@
       isTouchingBoids = false;
       isDraggingCamera = false;
       lastPinchDist = null;
+      if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
+      // Confirm placement on tap when a powerup is pending
+      if (pendingPowerup && !isLongPressing && !touchMoved) {
+        const world = screenToWorld(lastTouchPos.x, lastTouchPos.y);
+        placePowerup(pendingPowerupKey, world.x, world.y);
+        pendingPowerup = null;
+        pendingPowerupKey = null;
+        haptic(20);
+      }
+      isLongPressing = false;
+      touchMoved = false;
     } else if (touches.length === 1) {
       // Switched from 2 finger to 1 finger
       lastPinchDist = null;
@@ -194,12 +274,21 @@
   function handleWheel(e) {
     e.preventDefault();
     const delta = -e.deltaY * 0.001;
-    camera.targetZoom = Math.max(minZoom, Math.min(maxZoom, camera.targetZoom * (1 + delta)));
+    const factor = 1 + delta;
+    zoomAtPoint(factor, e.clientX, e.clientY);
   }
   
   function handleMouseDown(e) {
+    const x = e.clientX, y = e.clientY;
+    if (e.button === 1 || e.button === 2 || e.shiftKey) {
+      // Middle/right-drag or Shift+drag to pan
+      isPanning = true;
+      isTouchingBoids = false;
+      lastTouchPos = { x, y };
+      panVelocity = { x: 0, y: 0 };
+      return;
+    }
     if (e.button === 0) {
-      const x = e.clientX, y = e.clientY;
       if (isTouchingUI(x, y)) return;
       
       lastTouchPos = { x, y };
@@ -211,11 +300,16 @@
   function handleMouseMove(e) {
     const x = e.clientX, y = e.clientY;
     
-    if (e.shiftKey && isTouchingBoids) {
-      camera.x -= (x - lastTouchPos.x) / camera.zoom;
-      camera.y -= (y - lastTouchPos.y) / camera.zoom;
-      camera.x = Math.max(0, Math.min(ARENA_W, camera.x));
-      camera.y = Math.max(0, Math.min(ARENA_H, camera.y));
+    if (isPanning) {
+      const dx = x - lastTouchPos.x;
+      const dy = y - lastTouchPos.y;
+      camera.x -= dx / camera.zoom;
+      camera.y -= dy / camera.zoom;
+      panVelocity.x = (-dx / camera.zoom);
+      panVelocity.y = (-dy / camera.zoom);
+      clampCamera();
+      lastTouchPos = { x, y };
+      return;
     }
     
     if (isTouchingBoids) {
@@ -226,11 +320,32 @@
   }
   
   function handleMouseUp(e) {
+    if (isPanning) {
+      isPanning = false;
+      return;
+    }
     isTouchingBoids = false;
   }
   
+  function handleDoubleClick(e) {
+    const factor = e.shiftKey ? 1 / 1.6 : 1.6;
+    zoomAtPoint(factor, e.clientX, e.clientY);
+  }
+
   function handleClick(e) {
     const x = e.clientX, y = e.clientY;
+    if (isTouchingUI(x, y)) {
+      handleUITouch(x, y);
+      return;
+    }
+    if (pendingPowerup) {
+      const world = screenToWorld(x, y);
+      placePowerup(pendingPowerupKey, world.x, world.y);
+      pendingPowerup = null;
+      pendingPowerupKey = null;
+      haptic(15);
+      return;
+    }
     handleUITouch(x, y);
   }
   
@@ -280,6 +395,7 @@
     if (x >= pauseBtnX && x <= pauseBtnX + pauseBtnSize && 
         y >= pauseBtnY && y <= pauseBtnY + pauseBtnSize) {
       togglePause();
+      haptic(8);
       return;
     }
     
@@ -290,6 +406,46 @@
     if (x >= powerBtnX && x <= powerBtnX + powerBtnSize && 
         y >= powerBtnY && y <= powerBtnY + powerBtnSize) {
       showPowerupMenu = !showPowerupMenu;
+      powerupMenuAnchor = { x: powerBtnX + powerBtnSize / 2, y: powerBtnY };
+      haptic(6);
+      return;
+    }
+
+    // Mini-map and zoom buttons geometry (must match drawHUD)
+    const padding = 10 * uiScale;
+    const mapSize = isMobile ? 120 * uiScale : 150 * uiScale;
+    const mapX = canvasWidth - mapSize - padding;
+    const mapY = isMobile ? canvasHeight - mapSize - 80 * uiScale : 70 * uiScale;
+    const mapScale = mapSize / Math.max(ARENA_W, ARENA_H);
+
+    // Zoom +/- buttons
+    const zoomBtnSize = 32 * uiScale;
+    const zoomGap = 6 * uiScale;
+    const zoomX = mapX + mapSize - zoomBtnSize;
+    const zoomYPlus = mapY - zoomBtnSize - zoomGap;
+    const zoomYMinus = zoomYPlus - zoomBtnSize - zoomGap;
+
+    // Zoom plus
+    if (x >= zoomX && x <= zoomX + zoomBtnSize && y >= zoomYPlus && y <= zoomYPlus + zoomBtnSize) {
+      zoomAtPoint(1.2, canvasWidth / 2, canvasHeight / 2);
+      haptic(6);
+      return;
+    }
+    // Zoom minus
+    if (x >= zoomX && x <= zoomX + zoomBtnSize && y >= zoomYMinus && y <= zoomYMinus + zoomBtnSize) {
+      zoomAtPoint(1 / 1.2, canvasWidth / 2, canvasHeight / 2);
+      haptic(6);
+      return;
+    }
+
+    // Mini-map tap-to-pan
+    if (x >= mapX && x <= mapX + mapSize && y >= mapY && y <= mapY + mapSize) {
+      const worldX = (x - mapX) / mapScale;
+      const worldY = (y - mapY) / mapScale;
+      camera.x = Math.max(0, Math.min(ARENA_W, worldX));
+      camera.y = Math.max(0, Math.min(ARENA_H, worldY));
+      panVelocity = { x: 0, y: 0 };
+      haptic(8);
       return;
     }
     
@@ -297,16 +453,29 @@
     if (showPowerupMenu) {
       const menuItems = Object.keys(POWERUP_TYPES);
       const itemSize = 55 * uiScale;
-      const menuX = isMobile ? canvasWidth - itemSize - 10 * uiScale : 10 * uiScale;
+      let menuX = isMobile ? canvasWidth - itemSize - 10 * uiScale : 10 * uiScale;
       let menuY = canvasHeight - powerBtnSize - 20 * uiScale;
+      if (powerupMenuAnchor) {
+        menuX = Math.min(Math.max(powerupMenuAnchor.x - itemSize / 2, padding), canvasWidth - itemSize - padding);
+        menuY = Math.min(powerupMenuAnchor.y - 5 * uiScale, canvasHeight - padding);
+      }
       
       for (let i = 0; i < menuItems.length; i++) {
         menuY -= itemSize + 5 * uiScale;
         const key = menuItems[i];
         if (x >= menuX && x <= menuX + itemSize && 
             y >= menuY && y <= menuY + itemSize) {
-          placePowerup(key);
+          // Switch to pending placement mode with ghost
+          if (powerupCooldowns[key] > 0) {
+            alerts.push({ id: Date.now(), text: `${key} on cooldown`, time: Date.now() });
+            return;
+          }
+          pendingPowerupKey = key;
+          pendingPowerup = POWERUP_TYPES[key];
           showPowerupMenu = false;
+          powerupMenuAnchor = null;
+          alerts.push({ id: Date.now(), text: `Tap to place ${key}`, time: Date.now() });
+          haptic(8);
           return;
         }
       }
@@ -318,7 +487,7 @@
     if (!isPaused) slowMoRemaining = 750;
   }
   
-  function placePowerup(type) {
+  function placePowerup(type, wx = mouseWorldPos.x, wy = mouseWorldPos.y) {
     if (powerupCooldowns[type] > 0) {
       alerts.push({ id: Date.now(), text: `${type} on cooldown`, time: Date.now() });
       return;
@@ -326,9 +495,9 @@
     
     const def = POWERUP_TYPES[type];
     
-    // ALWAYS place at last touch/mouse position (not camera center)
-    const targetX = mouseWorldPos.x;
-    const targetY = mouseWorldPos.y;
+    // Place at requested world position
+    const targetX = wx;
+    const targetY = wy;
     
     activePowerups.push({ 
       ...def, 
@@ -339,7 +508,7 @@
     
     powerupCooldowns[type] = def.cooldown;
     morale[TEAM.PLAYER] = Math.max(0, morale[TEAM.PLAYER] - MORALE_DECAY_PER_POWERUP);
-    alerts.push({ id: Date.now(), text: `${type} deployed at touch`, time: Date.now() });
+    alerts.push({ id: Date.now(), text: `${type} deployed`, time: Date.now() });
   }
   
   function countTeams() {
@@ -354,6 +523,19 @@
     if (!ctx) return;
     
     camera.zoom += (camera.targetZoom - camera.zoom) * 0.15;
+    // Apply pan inertia
+    if (!isDraggingCamera && !isPanning) {
+      if (Math.abs(panVelocity.x) > 0.001 || Math.abs(panVelocity.y) > 0.001) {
+        camera.x += panVelocity.x;
+        camera.y += panVelocity.y;
+        clampCamera();
+        panVelocity.x *= 0.90;
+        panVelocity.y *= 0.90;
+      } else {
+        panVelocity.x = 0;
+        panVelocity.y = 0;
+      }
+    }
     
     const dt = 16;
     Object.keys(powerupCooldowns).forEach(k => {
@@ -362,6 +544,8 @@
     
     if (slowMoRemaining > 0) slowMoRemaining = Math.max(0, slowMoRemaining - dt);
     
+    // Reset transform for DPR
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.fillStyle = '#0a0a0a';
     ctx.fillRect(0, 0, canvasWidth, canvasHeight);
     
@@ -606,6 +790,27 @@
     ctx.strokeStyle = '#00FFFF';
     ctx.lineWidth = 2;
     ctx.strokeRect(viewX, viewY, viewW, viewH);
+
+    // Zoom +/- buttons near minimap (desktop and mobile)
+    const zoomBtnSize = 32 * uiScale;
+    const zoomGap = 6 * uiScale;
+    const zoomX = mapX + mapSize - zoomBtnSize;
+    const zoomYPlus = mapY - zoomBtnSize - zoomGap;
+    const zoomYMinus = zoomYPlus - zoomBtnSize - zoomGap;
+    ctx.fillStyle = 'rgba(0,0,0,0.8)';
+    ctx.fillRect(zoomX, zoomYPlus, zoomBtnSize, zoomBtnSize);
+    ctx.fillRect(zoomX, zoomYMinus, zoomBtnSize, zoomBtnSize);
+    ctx.strokeStyle = '#444';
+    ctx.strokeRect(zoomX, zoomYPlus, zoomBtnSize, zoomBtnSize);
+    ctx.strokeRect(zoomX, zoomYMinus, zoomBtnSize, zoomBtnSize);
+    ctx.font = `${Math.floor(18 * uiScale)}px monospace`;
+    ctx.fillStyle = '#fff';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('+', zoomX + zoomBtnSize / 2, zoomYPlus + zoomBtnSize / 2);
+    ctx.fillText('−', zoomX + zoomBtnSize / 2, zoomYMinus + zoomBtnSize / 2);
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
     
     // Morale bars (top-left)
     const barW = isMobile ? 120 * uiScale : 180 * uiScale;
@@ -692,8 +897,12 @@
     if (showPowerupMenu) {
       const menuItems = Object.entries(POWERUP_TYPES);
       const itemSize = 55 * uiScale;
-      const menuX = isMobile ? canvasWidth - itemSize - padding : padding;
+      let menuX = isMobile ? canvasWidth - itemSize - padding : padding;
       let menuY = powerBtnY - 5 * uiScale;
+      if (powerupMenuAnchor) {
+        menuX = Math.min(Math.max(powerupMenuAnchor.x - itemSize / 2, padding), canvasWidth - itemSize - padding);
+        menuY = Math.min(powerupMenuAnchor.y - 5 * uiScale, canvasHeight - padding);
+      }
       
       menuItems.forEach(([key, powerup]) => {
         menuY -= itemSize + 5 * uiScale;
@@ -754,6 +963,26 @@
       ctx.arc(screenPos.x, screenPos.y, 40 * uiScale, 0, Math.PI * 2);
       ctx.stroke();
       ctx.globalAlpha = 1;
+    }
+
+    // Pending powerup ghost indicator
+    if (pendingPowerup) {
+      const ghost = pendingPowerup;
+      const radius = ghost.radius || 160;
+      const screenPos = worldToScreen(mouseWorldPos.x, mouseWorldPos.y);
+      ctx.save();
+      ctx.globalAlpha = 0.25;
+      ctx.strokeStyle = ghost.color;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(screenPos.x, screenPos.y, radius * camera.zoom, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.globalAlpha = 0.85;
+      ctx.fillStyle = ghost.color;
+      ctx.beginPath();
+      ctx.arc(screenPos.x, screenPos.y, 8 * uiScale, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
     }
   }
 </script>
