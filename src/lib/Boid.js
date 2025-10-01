@@ -1,4 +1,4 @@
-import { WALLS, DOORS, doorManager, ARENA_W, ARENA_H } from './constants';
+import { WALLS, DOORS, doorManager, ARENA_W, ARENA_H, DEFECTION_CHANCE_BASE } from './constants';
 
 export class Boid {
     constructor(x, y, vx, vy, groupIndex, colors) {
@@ -426,17 +426,38 @@ export class Boid {
         const distance = Math.sqrt(dx * dx + dy * dy);
 
         if (distance < mouseSettings.repulsionRadius && distance > 0) {
-            const strength = (mouseSettings.repulsionRadius - distance) / mouseSettings.repulsionRadius;
-            // For Swarm Commander: attract player boids, repel others
-            // This is called mouseRepulsion but can be attraction with negative force
-            const direction = this.groupIndex === 0 ? -1 : 1; // Attract player team, repel AI
+            const normX = dx / distance;
+            const normY = dy / distance;
+            const t = 1 - (distance / mouseSettings.repulsionRadius);
+            const strength = (mouseSettings.strength ?? 0.4) * t;
+            const direction = this.groupIndex === 0 ? -1 : 1; // Attract player, repel AI
             return {
-                x: (dx / distance) * this.maxForce * strength * direction,
-                y: (dy / distance) * this.maxForce * strength * direction
+                x: normX * this.maxForce * strength * direction,
+                y: normY * this.maxForce * strength * direction
             };
         }
 
         return { x: 0, y: 0 };
+    }
+
+    // Optional: probabilistic defection based on nearby enemy pressure and global morale
+    considerProbabilisticDefection(quadtreeOrBoids, neighborRadius, globalMoraleByTeam) {
+        if (!quadtreeOrBoids || DEFECTION_CHANCE_BASE <= 0) return;
+        const nearby = this.findNearbyBoids(quadtreeOrBoids, neighborRadius);
+        if (nearby.length === 0) return;
+
+        const enemyCount = nearby.filter(o => o.groupIndex !== this.groupIndex).length;
+        if (enemyCount === 0) return;
+
+        const playerMorale = globalMoraleByTeam?.player ?? 0.5;
+        const currentMorale = playerMorale; // single meter proxy
+        const moraleModifier = this.groupIndex === 0 ? (1 - currentMorale) : currentMorale;
+        const defectionRisk = DEFECTION_CHANCE_BASE * enemyCount * (1 + moraleModifier);
+
+        if (Math.random() < defectionRisk) {
+            this.groupIndex = this.groupIndex === 0 ? 1 : 0;
+            this.color = this.colors[this.groupIndex];
+        }
     }
 
     avoidWalls() {

@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { writable, get } from 'svelte/store';
 import { Boid } from './Boid.js';
 import { gameState } from './gameStore';
@@ -14,36 +15,36 @@ export const doctrine = writable({
 });
 
 export const weights = writable({
-    separation: 2.0,
-    alignment: 1.5,
-    cohesion: 1.2,
-    groupRepulsion: 0.3,
-    mouseRepulsion: 1.5,
+    separation: 0.3,
+    alignment: 0.2,
+    cohesion: 0.1,
+    groupRepulsion: 0.2,
+    mouseRepulsion: 1.0,
     wallAvoidance: 3.0,
     borderAvoidance: 3.0
 });
 
 export const speeds = writable({
-    min: 2,
-    max: 4
+    min: 1,
+    max: 2
 });
 
-export const numBoids = writable(240); // 120 per team
+export const numBoids = writable(150); // match reference: total boids
 export const numGroups = writable(2); // Always 2 teams now
 
 export const visualSettings = writable({
-    boidSize: 4,  // Much smaller - was 10
+    boidSize: 5,
     trailLength: 4,
     trailWidth: 1,
     trailOpacity: 0.15,
-    neighborRadius: 30,
+    neighborRadius: 50,
     separationRadius: 20
 });
 
 export const groupSettings = writable({
-    peerPressure: 0.1, // Maximized peer pressure
-    peerRadius: 50, // Maximized peer radius for more influence
-    loyaltyFactor: 0 // Set to zero as requested
+    peerPressure: 0.0, // Prefer probabilistic defection over instantaneous peer switching
+    peerRadius: 50,
+    loyaltyFactor: 0
 });
 
 export const uiState = writable({
@@ -56,9 +57,10 @@ export const canvasSettings = writable({
 });
 
 export const mouseSettings = writable({
-    repulsionRadius: 100,
+    repulsionRadius: 150,
     position: { x: 0, y: 0 },
-    active: true
+    active: true,
+    strength: 0.4
 });
 
 // Helper to check if position is inside any obstacle
