@@ -213,3 +213,8 @@ export const POWERUP_TYPES = {
         cooldown: 3500
     }
 };
+
+// Swarm Commander mechanics alignment with React reference
+export const DEFECTION_CHANCE_BASE = 0.001;
+export const MOUSE_INFLUENCE_RADIUS = 150;
+export const MOUSE_INFLUENCE_STRENGTH = 0.4;

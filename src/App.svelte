@@ -9,7 +9,8 @@
   import { 
     TEAM, COLOR_NAMES, ARENA_W, ARENA_H, WALLS, DOORS, doorManager,
     SECTOR_W, SECTOR_H, SECTOR_LABELS, SECTOR_COLS, SECTOR_ROWS, 
-    START_MORALE, MORALE_RECOVERY_RATE, MORALE_DECAY_PER_POWERUP, POWERUP_TYPES
+    START_MORALE, MORALE_RECOVERY_RATE, MORALE_DECAY_PER_POWERUP, POWERUP_TYPES,
+    MOUSE_INFLUENCE_RADIUS
   } from './lib/constants';
 
   let canvas, ctx;
@@ -312,9 +313,8 @@
       return;
     }
     
-    if (isTouchingBoids) {
-      mouseWorldPos = screenToWorld(x, y);
-    }
+    // Always track last mouse position in world, even if not actively dragging
+    mouseWorldPos = screenToWorld(x, y);
     
     lastTouchPos = { x, y };
   }
@@ -616,12 +616,17 @@
       };
       
       boidsData.boids.forEach(boid => {
-        const mouseSettingsForBoid = boid.groupIndex === TEAM.PLAYER && isTouchingBoids
-          ? { ...$mouseSettings, position: mouseWorldPos, active: true, repulsionRadius: 120 }
-          : { ...$mouseSettings, active: false };
+        const mouseSettingsForBoid = boid.groupIndex === TEAM.PLAYER
+          ? { ...$mouseSettings, position: mouseWorldPos, active: true, repulsionRadius: MOUSE_INFLUENCE_RADIUS }
+          : { ...$mouseSettings, position: mouseWorldPos, active: true, repulsionRadius: MOUSE_INFLUENCE_RADIUS };
         
         boid.update(ARENA_W, ARENA_H, boidsData, doctrineWeights, $speeds, $visualSettings, 
           { ...$groupSettings, loyaltyFactor: currentDoctrine.bravery }, mouseSettingsForBoid, []);
+
+        // Additional probabilistic defection tuned by morale
+        boid.considerProbabilisticDefection(boidsData.quadtree, $visualSettings.neighborRadius, {
+          player: morale[TEAM.PLAYER]
+        });
       });
       
       boidsData.quadtree.update(boidsData.boids);
@@ -754,6 +759,16 @@
     
     drawHUD();
     alerts = alerts.filter(a => Date.now() - a.time < 3000);
+    
+    // Draw mouse influence ring in screen space at current mouseWorldPos
+    const ring = worldToScreen(mouseWorldPos.x, mouseWorldPos.y);
+    ctx.save();
+    ctx.strokeStyle = 'rgba(0, 191, 255, 0.2)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(ring.x, ring.y, MOUSE_INFLUENCE_RADIUS * camera.zoom, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
     
     animationFrameId = requestAnimationFrame(update);
   }
